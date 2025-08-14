@@ -128,3 +128,10 @@ _Untitled.*
 
 # Local directory
 /local
+
+# Model files
+docs/examples/model/
+docs/examples/output/
+docs/examples/log/
+# cache
+**/__pycache__/
