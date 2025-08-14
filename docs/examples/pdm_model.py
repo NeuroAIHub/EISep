@@ -1,0 +1,460 @@
+import numpy as np
+import torch
+import torch.nn as nn
+
+import neurogym as ngym
+
+import warnings
+from torch.nn import functional as F
+
+from matplotlib import pyplot as plt
+
+
+class EISepLSTM(nn.Module):
+    """
+    Custom multi-layer sequence LSTM with separate excitatory/inhibitory neurons.
+    Input x: (seq_len, batch_size, feature_dim)
+    Outputs:
+      - output_seq: (seq_len, batch_size, hidden_size)
+      - (h_n, c_n): each (num_layers, batch_size, hidden_size)
+    """
+    def __init__(self, input_size: int, hidden_size: int, output_size: int):
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        # per-layer input → hidden
+
+        self.input_layer = nn.Linear(input_size, hidden_size)
+        self.Wrec_free = nn.Parameter(nn.ReLU()(torch.randn(hidden_size, hidden_size)*0.1/2))
+        # print('Wrec_free1:', self.Wrec_free.device)
+        # self.Wrec_free = nn.ReLU()(self.Wrec_free)  # Ensure non-negative recurrent weights
+        # print('Wrec_free after ReLU1:', self.Wrec_free.device)
+        ### test exponential init
+        # self.Wrec_free = nn.Parameter(torch.FloatTensor(np.random.exponential(scale=1/np.sqrt(hidden_size), size=(hidden_size, hidden_size))))
+        self.bias = nn.Parameter(torch.randn(hidden_size)*0.1)
+        self.eimask_logit = nn.Parameter(torch.randn(hidden_size, 2)*0.1)
+        ### test fixed sign
+        # self.eimask_logit = nn.Parameter(torch.zeros(hidden_size, 2))
+        # self.eimask_logit.requires_grad = False # test for fixed sign
+        # exc_idx = torch.randperm(hidden_size)  # 80% excitatory
+        # self.eimask_logit[exc_idx[:int(hidden_size*0.8)], 0] = 1.0  # excitatory
+        # self.eimask_logit[exc_idx[int(hidden_size*0.8):], 1] = 1.0  # inhibitory
+
+
+        # map top-layer hidden → output
+        self.output_layer = nn.Linear(hidden_size, output_size)
+        self.act          = nn.Tanh()
+        self.rec_filter   = torch.abs
+
+        self.training = True
+        ###
+        # nn.init.orthogonal_(self.Wrec_free)  # Initialize recurrent weights orthogonally
+        nn.init.normal_(self.eimask_logit)
+        for m in [self.input_layer, self.output_layer]:
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight)
+                nn.init.normal_(m.bias, mean=0, std=0.1)
+
+    def forward(self, temperature, x, hx=None):
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
+
+        # init or unpack hidden/cell: (L, B, H)
+        if hx is None:
+            h = x.new_zeros(B, self.hidden_size)
+            c = x.new_zeros(B, self.hidden_size)
+        else:
+            h, c = hx
+
+        outputs = torch.zeros(T, B, self.output_size, device=device)  # (T, B, H)
+        hs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
+        cs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
+        rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
+        # loop over time
+        for t in range(T):
+            layer_in = x[t]  # (B, D_in) or (B, H)
+            # no loop over layers
+            input_gate = self.input_layer(layer_in)  # (B, H)
+            ###
+            if self.training:
+                mask = F.gumbel_softmax(self.eimask_logit,
+                            tau=0.1, hard=False, dim=-1)
+                ei_code = mask[:, 0] - mask[:, 1]
+            else:
+                ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
+            # if temperature < 0:
+            #     ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
+            # else:
+            #     mask = (self.eimask_logit/temperature).softmax(dim=-1)  # (H, 2)
+            #     ei_code = mask[:, 0] - mask[:, 1]
+            Wrec   = self.rec_filter(self.Wrec_free)        # (H, H)
+            actual = Wrec @ torch.diag(ei_code)     # (H, H)
+            # 3) rec input
+            rec_in = h @ actual.T + self.bias          # (B, H)
+            # 4) new hidden
+            new_h    = self.act(input_gate + rec_in)                   # (B, H)
+
+            # new_h.append(h_i)
+            # new_c.append(c[i])   # 如果以后要更新 c_i，在这里替换
+            # layer_in = h_i       # feed to next layer
+            new_c = c
+
+
+            # stack per-layer states
+            # h = torch.stack(new_h, dim=0)  # (L, B, H)
+            # c = torch.stack(new_c, dim=0)
+            hs[t] = new_h  # (B, H)
+            cs[t] = new_c  # (B, H)
+            rec_ins[t] = rec_in
+            h = new_h  # (B, H)
+            c = new_c  # (B, H)
+            # project top-layer hidden to output
+            # outputs.append(self.output_layer(new_h))  # (B, H)
+            outputs[t] = self.output_layer(new_h)
+
+        # (T, B, H)
+        # output_seq = torch.stack(outputs, dim=0)
+        # h_seq = torch.stack(hs, dim=0)  # (T, B, H)
+        # c_seq = torch.stack(cs, dim=0)  # (T, B, H)
+        output_seq = outputs
+        h_seq = hs
+        c_seq = cs
+
+
+        return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
+        # return outputs, (new_h, new_c)
+
+    def eval(self):
+        self.training = False
+    def train(self, mode=True):
+        self.training = mode
+
+    def _activation_derivative(self, postact):
+        """ Compute the derivative of the activation function.
+        preact: (B, H)
+        returns: (B, H) act'(preact)
+        """
+        if isinstance(self.act, torch.nn.ReLU):
+            return torch.where(postact > 0, 1.0, 0.0)
+        if isinstance(self.act, torch.nn.Tanh):
+            return 1 - postact ** 2
+    def compute_lyapunov_spectrum(self, x, hx=None):
+        """
+        Return:
+        lambda_i: (H,) # average Lyapunov exponent for each hidden unit
+        lambda_j: (B, H) # Lyapunov exponent for each hidden unit in each sample
+        """
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
+
+        # init or unpack hidden/cell: (L, B, H)
+        if hx is None:
+            h = x.new_zeros(B, self.hidden_size)
+            c = x.new_zeros(B, self.hidden_size)
+        else:
+            h, c = hx
+
+
+        # 初始化正交基 Q: (B, H, H)
+        Q = torch.eye(self.hidden_size, device=device).unsqueeze(0).repeat(B, 1, 1)  # 每个 sample 一组基
+        # 累计 gamma: (B, H)
+        gamma = torch.zeros(B, self.hidden_size, device=device)
+
+        # 逐步推进
+        for t in range(T):
+            layer_in = x[t]  # (B, D_in) or (B, H)
+            # no loop over layers
+            input_gate = self.input_layer(layer_in)  # (B, H)
+            if self.training:
+                mask = F.gumbel_softmax(self.eimask_logit,
+                            tau=0.1, hard=False, dim=-1)
+                ei_code = mask[:, 0] - mask[:, 1]
+            else:
+                ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
+            # if temperature < 0:
+            #     ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
+            # else:
+            #     mask = (self.eimask_logit/temperature).softmax(dim=-1)  # (H, 2)
+            #     ei_code = mask[:, 0] - mask[:, 1]
+            Wrec   = self.rec_filter(self.Wrec_free)        # (H, H)
+            actual = Wrec @ torch.diag(ei_code)     # (H, H)
+            # 3) rec input
+            rec_in = h @ actual.T + self.bias          # (B, H)
+            # 4) new hidden
+            new_h    = self.act(input_gate + rec_in)                   # (B, H)
+
+
+            # 计算雅可比作用在当前正交基上：J = diag(phi'(preact)) @ actual.T
+            # 先算 A = actual.T @ Q  -> (B, H, H)
+            A = torch.einsum('ij,bjk->bik', actual.T, Q)  # (B, H, H)
+
+            # 再算 act'（每个 batch, 每个维度）
+            act_prime = activation_derivative(self.act, new_h)  # (B, H)
+            # JQ = diag(act_prime) @ A; diag multiplies每一行
+            JQ = act_prime.unsqueeze(-1) * A  # (B, H, H)
+
+            # QR 重正交化（batch 版）
+            # torch.linalg.qr 在新版 PyTorch 支持 batch
+            Q_new, R = torch.linalg.qr(JQ)  # Q_new: (B,H,H), R: (B,H,H)
+            # 累加 log 伸缩因子
+            diag_R = torch.diagonal(R, dim1=1, dim2=2)  # (B, H)
+            gamma += torch.log(torch.abs(diag_R) + 1e-10)  # 防止 0
+
+            # 更新状态 / 基
+            Q = Q_new
+            h = new_h
+            # c 保持不变（和你的 forward 一样）
+
+        # 该 batch 每个 sample 的有限时间 Lyapunov 指数
+        lambda_j = gamma / float(T)  # (B, H)
+        # 平均得到谱
+        lambda_i = lambda_j.mean(dim=0)  # (H,)
+
+        return lambda_i, lambda_j
+
+def load_model(prefix: str, num_h: int, ob_size: int, act_size: int, device: str = 'cpu') -> nn.Module:
+    """
+    Load a model from a file.
+    """
+    if 'simple' in prefix:
+        model = SimpleNet(num_h, ob_size, act_size).to(device)
+    else:
+        model = Net(num_h, ob_size, act_size).to(device)
+        model.set_temperature(-1)
+    model.load_state_dict(torch.load(f'./model/perceptualdecisionmaking/{prefix}.pth', map_location=device))
+    model.eval()
+
+    return model
+
+def activation_derivative(act_module, postact):
+    """ Compute the derivative of the activation function.
+    preact: (B, H)
+    returns: (B, H) act'(preact)
+    """
+    if isinstance(act_module, torch.nn.ReLU):
+        return torch.where(postact > 0, 1.0, 0.0)
+    if isinstance(act_module, torch.nn.Tanh):
+        return 1 - postact ** 2
+
+class Net(nn.Module):
+    def __init__(self, num_h, ob_size, act_size, entropy_loss=True):
+        super(Net, self).__init__()
+        self.hidden_size = num_h
+        self.input_size = ob_size
+        self.output_size = act_size
+        self.lstm = EISepLSTM(ob_size, num_h, act_size)
+        self.temperature = None
+        self.entropy_loss = entropy_loss
+        # self.linear = nn.Linear(num_h, act_size)
+
+    def forward(self, x):
+        # print('x:', x.shape)
+        out, hidden = self.lstm(self.temperature, x)
+        # print('out:', out.shape, 'hidden:', hidden[0].shape, hidden[1].shape)
+        # x = self.linear(out)
+        return out, self.lstm.eimask_logit, hidden
+
+    def get_actual_weight(self):
+        """
+        Get the actual recurrent weight matrix.
+        """
+        weight = self.lstm.Wrec_free
+        corrected_weight = self.lstm.rec_filter(weight)  # Apply the rectifier
+        # mask = F.gumbel_softmax(self.lstm.eimask_logit, tau=0.1, hard=False, dim=-1)
+        ei_code = torch.where(self.lstm.eimask_logit[:, 0] > self.lstm.eimask_logit[:, 1], 1., -1.)
+        actual_weight = corrected_weight @ torch.diag(ei_code)
+        # actual_weight = corrected_weight @ torch.diag(mask[:, 0] - mask[:, 1])  # Apply the mask to the weight
+        return actual_weight
+
+    def set_temperature(self, temperature: float):
+        """
+        Set the temperature for the Gumbel-Softmax sampling.
+        """
+        self.temperature = temperature
+
+    def init_hidden(self, batch_size, device):
+        h0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
+        c0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
+        return (h0, c0)
+
+    def compute_lyapunov_spectrum(self, x, hx=None):
+        """
+        Compute the Lyapunov spectrum of the model.
+        """
+        return self.lstm.compute_lyapunov_spectrum(x, hx)
+
+
+class simpleRNN(nn.Module):
+    """
+    A simple RNN with a single hidden layer.
+    """
+    def __init__(self, input_size: int, hidden_size: int, output_size: int):
+        super(simpleRNN, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.input_layer = nn.Linear(input_size, hidden_size)
+        self.Wrec_free = nn.Parameter(nn.ReLU()(torch.randn(hidden_size, hidden_size) * 0.1/2))
+        # print('Wrec_free:', self.Wrec_free.device)
+        # self.Wrec_free = nn.ReLU()(self.Wrec_free)  # Ensure non-negative recurrent weights
+        # print('Wrec_free after ReLU:', self.Wrec_free.device)
+        self.bias = nn.Parameter(torch.randn(hidden_size) * 0.1)
+        self.act = nn.Tanh()
+        self.output_layer = nn.Linear(hidden_size, output_size)
+        # nn.init.orthogonal_(self.Wrec_free)  # Initialize recurrent weights orthogonally
+        for m in [self.input_layer, self.output_layer]:
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight)
+                nn.init.normal_(m.bias, mean=0, std=0.1)
+
+    def forward(self, x, hx=None):
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
+
+        # init or unpack hidden/cell: (L, B, H)
+        if hx is None:
+            h = x.new_zeros(B, self.hidden_size)
+            c = x.new_zeros(B, self.hidden_size)
+        else:
+            h, c = hx
+
+        outputs = []
+        hs = []
+        cs = []
+        rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
+        # loop over time
+        for t in range(T):
+            layer_in = x[t]  # (B, D_in) or (B, H)
+            # no loop over layers
+            input_gate = self.input_layer(layer_in)  # (B, H)
+
+            # 3) rec input
+            rec_in = h @ self.Wrec_free + self.bias          # (B, H)
+            # 4) new hidden
+            new_h    = self.act(input_gate + rec_in)                   # (B, H)
+
+            # new_h.append(h_i)
+            # new_c.append(c[i])   # 如果以后要更新 c_i，在这里替换
+            # layer_in = h_i       # feed to next layer
+            new_c = c
+
+
+            # stack per-layer states
+            # h = torch.stack(new_h, dim=0)  # (L, B, H)
+            # c = torch.stack(new_c, dim=0)
+            hs.append(new_h)  # (B, H)
+            cs.append(new_c)  # (B, H)
+            rec_ins[t] = rec_in
+            h = new_h  # (B, H)
+            c = new_c  # (B, H)
+            # project top-layer hidden to output
+            outputs.append(self.output_layer(new_h))  # (B, H)
+
+        # (T, B, H)
+        output_seq = torch.stack(outputs, dim=0)
+        h_seq = torch.stack(hs, dim=0)  # (T, B, H)
+        c_seq = torch.stack(cs, dim=0)  # (T, B, H)
+        return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
+
+
+
+    def compute_lyapunov_spectrum(self, x, hx=None):
+        """
+        Return:
+        lambda_i: (H,) # average Lyapunov exponent for each hidden unit
+        lambda_j: (B, H) # Lyapunov exponent for each hidden unit in each sample
+        """
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
+
+        # init or unpack hidden/cell: (L, B, H)
+        if hx is None:
+            h = x.new_zeros(B, self.hidden_size)
+            c = x.new_zeros(B, self.hidden_size)
+        else:
+            h, c = hx
+
+
+        # 初始化正交基 Q: (B, H, H)
+        Q = torch.eye(self.hidden_size, device=device).unsqueeze(0).repeat(B, 1, 1)  # 每个 sample 一组基
+        # 累计 gamma: (B, H)
+        gamma = torch.zeros(B, self.hidden_size, device=device)
+
+        # 逐步推进
+        for t in range(T):
+            layer_in = x[t]  # (B, D_in) or (B, H)
+            # no loop over layers
+            input_gate = self.input_layer(layer_in)  # (B, H)
+
+            # 3) rec input
+            rec_in = h @ self.Wrec_free + self.bias          # (B, H)
+            # 4) new hidden
+            new_h    = self.act(input_gate + rec_in)                   # (B, H)
+
+
+
+            # 计算雅可比作用在当前正交基上：J = diag(phi'(preact)) @ actual.T
+            # 先算 A = actual.T @ Q  -> (B, H, H)
+            A = torch.einsum('ij,bjk->bik', self.Wrec_free.T, Q)  # (B, H, H)
+
+            # 再算 act'（每个 batch, 每个维度）
+            act_prime = activation_derivative(self.act, new_h)  # (B, H)
+            # JQ = diag(act_prime) @ A; diag multiplies每一行
+            JQ = act_prime.unsqueeze(-1) * A  # (B, H, H)
+
+            # QR 重正交化（batch 版）
+            # torch.linalg.qr 在新版 PyTorch 支持 batch
+            Q_new, R = torch.linalg.qr(JQ)  # Q_new: (B,H,H), R: (B,H,H)
+            # 累加 log 伸缩因子
+            diag_R = torch.diagonal(R, dim1=1, dim2=2)  # (B, H)
+            gamma += torch.log(torch.abs(diag_R) + 1e-10)  # 防止 0
+
+            # 更新状态 / 基
+            Q = Q_new
+            h = new_h
+            # c 保持不变（和你的 forward 一样）
+
+        # 该 batch 每个 sample 的有限时间 Lyapunov 指数
+        lambda_j = gamma / float(T)  # (B, H)
+        # 平均得到谱
+        lambda_i = lambda_j.mean(dim=0)  # (H,)
+
+        return lambda_i, lambda_j
+
+
+class SimpleNet(nn.Module):
+    """
+    A simple RNN with a single hidden layer.
+    """
+    def __init__(self, num_h: int, ob_size: int, act_size: int):
+        super(SimpleNet, self).__init__()
+        self.hidden_size = num_h
+        self.input_size = ob_size
+        self.output_size = act_size
+        self.entropy_loss = False
+        self.lstm = simpleRNN(ob_size, num_h, act_size)
+
+    def forward(self, x):
+        # x: (T, B, D_in)
+        out, hidden = self.lstm(x)
+        # print('history shape:', history.shape, 'hidden shape:', hidden.shape)
+        return out, None, hidden
+    def init_hidden(self, batch_size, device):
+        h0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
+        c0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
+        return (h0, c0)
+    def get_actual_weight(self):
+        """
+        Get the actual recurrent weight matrix.
+        """
+        return self.lstm.Wrec_free
+    def compute_lyapunov_spectrum(self, x, hx=None):
+        """
+        Compute the Lyapunov spectrum of the model.
+        """
+        return self.lstm.compute_lyapunov_spectrum(x, hx)

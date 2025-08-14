@@ -304,6 +304,8 @@ class TrialEnv(BaseEnv):
             self.add_period(period[0], duration=duration[0], after=after)
             for i in range(1, len(period)):
                 is_last = (i == len(period) - 1) and last_period
+                # print('i, is_last:', i, is_last)
+                # print('period[i]:', period[i], 'duration[i]:', duration[i], 'after:', period[i-1])
                 self.add_period(
                     period[i],
                     duration=duration[i],
@@ -397,7 +399,11 @@ class TrialEnv(BaseEnv):
                 if reset:
                     ob[..., where] *= 0
                 # TODO: This only works if the slicing is one one-dimension
+                # print('ob:', ob.shape, ob)
+                # print('name:', self.observation_space.name)
+                # print('adding ob:', p, where, ob[..., where].shape, value)
                 ob[..., where] += value(ob[..., where]) if callable(value) else value
+                # print('ob after adding:', ob.shape, ob)
 
     def add_ob(self, value, period=None, where=None) -> None:
         """Add value to observation.

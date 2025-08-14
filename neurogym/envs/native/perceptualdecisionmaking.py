@@ -46,12 +46,12 @@ class PerceptualDecisionMaking(TrialEnv):
         abort: bool = False,
     ) -> None:
         super().__init__(dt=dt)
-
+        # print('Constructing PerceptualDecisionMaking environment with dt:', dt, 'ms')
         self.dt = dt
         self.dim_ring = dim_ring
         self.abort = abort
 
-        self.rewards = {"abort": -0.1, "correct": 1.0, "fail": 0.0}
+        self.rewards = {"abort": -0.1, "correct": 1.0, "fail": -0.5}
         if rewards:
             self.rewards.update(rewards)
 
@@ -102,6 +102,29 @@ class PerceptualDecisionMaking(TrialEnv):
 
         self.set_groundtruth(gt, period="decision", where="choice")
 
+        return trial
+
+    def test_new_trial(self, choice, coh):
+        self._tmax = 0  # reset, self.tmax not reset so it can be used in step
+        self._ob_built = False
+        self._gt_built = False
+
+        trial = {"ground_truth": choice,
+            "coh": coh}
+        gt = trial["ground_truth"]
+        stim_theta = self.theta[gt]
+        self.add_period(["fixation", "stimulus", "delay", "decision"])
+        self.add_ob(1, period="fixation", where="fixation")
+        stim = np.cos(self.theta - stim_theta) * (coh / 200) + 0.5
+        self.add_ob(stim, period="stimulus", where="stimulus")
+        # print('stim:', stim)
+        self.add_randn(0, self.sigma, period="stimulus", where="stimulus")
+        # print('noisy stim:', self.view_ob("stimulus"))
+        self.set_groundtruth(gt, period="decision", where="choice")
+
+        self.trial = trial
+        self.num_tr += 1  # Increment trial count
+        self._has_gt = self._gt_built
         return trial
 
     def _step(self, action):
