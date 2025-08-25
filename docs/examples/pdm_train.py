@@ -13,7 +13,8 @@ warnings.filterwarnings("ignore")
 clear_output()
 
 
-def train(env, net, epochs=2000, lyapunov_every=100, batch_size=32, seq_len=100, device='cuda:0'):
+def train(env, net, epochs=2000, lyapunov_every=100, batch_size=32, seq_len=100, device='cuda:0',
+          lr=0.01, weight_decay=1e-5, rate_l1=0.0, weight_l1=0.0):
     seq_len = 100
     batch_size = 32
     dataset = ngym.Dataset(env, batch_size=batch_size, seq_len=seq_len)
@@ -21,7 +22,7 @@ def train(env, net, epochs=2000, lyapunov_every=100, batch_size=32, seq_len=100,
     net.train()
     # This weighting deprioritizes class 0 while keeping the other 16 classes equally important,
     # aligning with the reward distribution idea from the RL setting
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.01, weight_decay=1e-5)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
     criterion = nn.CrossEntropyLoss()
 
     # Training loop
@@ -53,9 +54,11 @@ def train(env, net, epochs=2000, lyapunov_every=100, batch_size=32, seq_len=100,
 
         # clip for decision period
         #TODO: not so necessary in other envs
-        outputs = outputs[env.decision_idx:]
-        targets = targets[env.decision_idx:]
-
+        # outputs = outputs[env.decision_idx:]
+        # targets = targets[env.decision_idx:]
+        # print(outputs.shape, targets.shape, eimask_logit.shape, hidden[0].shape)
+        rate_loss = hidden[0].abs().mean((-1,-2)).sum(0)
+        weight_loss = net.get_weight_loss()
         # Reshape for CrossEntropyLoss
         outputs_flat = outputs.reshape(-1, outputs.size(2))
         targets_flat = targets.reshape(-1)
@@ -75,7 +78,7 @@ def train(env, net, epochs=2000, lyapunov_every=100, batch_size=32, seq_len=100,
 
 
 
-        loss = entropy_loss * 1 + decoding_loss * 1
+        loss = entropy_loss * 1 + decoding_loss * 1 + rate_loss * rate_l1 + weight_loss * weight_l1
 
         # Backward pass and optimize
         loss.backward()
@@ -104,7 +107,93 @@ def train(env, net, epochs=2000, lyapunov_every=100, batch_size=32, seq_len=100,
     return net, loss_log, gradient_log, spectral_radius_log, rec_balance_log, lyapunov_spectrum_log
 
 
+def test_multitask(env, net, eval_trials=100, device='cuda:0'):
+    verbose = False
+    # Evaluate performance of the trained model
+    net.eval()
+    # Initialize storage for each environment
+    sl_mean_performance = {}
+    for e_i in env.envs:
+        sl_mean_performance[e_i.spec.id] = []
 
+    # Evaluate for specified number of trials
+    print(f"Evaluating model performance across {eval_trials} trials...\n")
+
+    for env_idx, e_i in enumerate(env.envs):
+        data = {"action": [], "gt": [], "trial": []}
+        total_correct = 0
+        for trial_idx in range(eval_trials):
+            trial = e_i.new_trial()
+            data["trial"].append(trial)
+            ob, gt = e_i.ob, e_i.gt
+            data["gt"].append(gt[-1])
+            trial_length = ob.shape[0]
+
+            # Add one-hot encoding for the environment
+            env_one_hot = np.zeros((trial_length, len(env.envs)))
+            env_one_hot[:, env_idx] = 1.0  # Set the current environment index to 1
+
+            # Concatenate original observation with one-hot encoding
+            ob_with_env = np.concatenate([ob, env_one_hot], axis=1)
+
+            ob_with_env = ob_with_env[:, np.newaxis, :]  # Add batch dimension
+
+            inputs = torch.from_numpy(ob_with_env).float().to(device)
+            # hidden = sl_model.init_hidden(1, device)
+
+            with torch.no_grad():
+                outputs, _, hidden = net(inputs)
+                pred_actions = torch.argmax(outputs, dim=2)
+                data["action"].append(pred_actions[-1, 0].cpu().numpy())
+
+            decision_idx = trial_length - 1
+            is_correct = (gt[decision_idx] == pred_actions[decision_idx, 0].cpu().numpy())
+            total_correct += is_correct
+
+        accuracy = total_correct / eval_trials
+        sl_mean_performance[e_i.spec.id].append(accuracy)
+        for key in data:
+            if key != "trial":
+                data[key] = np.array(data[key])
+
+
+    # Print average performance
+    print("Average performance across all environments:")
+    mean_acc_all = np.array([np.mean(sl_mean_performance[e_i.spec.id]) for e_i in env.envs])
+    for e_i in env.envs:
+        mean_acc = np.mean(sl_mean_performance[e_i.spec.id])
+        print(f"{e_i.spec.id}: {mean_acc:.4f}")
+    return mean_acc_all
+
+
+def plot_test_performance(test_EI_acc, test_simple_acc, env_names, show_values=True):
+    mean_ei = test_EI_acc
+    mean_simple = test_simple_acc
+
+    n_env = mean_ei.shape[0]
+    x = np.arange(n_env)
+    width = 0.35  # bar width
+
+    fig, ax = plt.subplots(figsize=(12,4))
+
+    bars_ei = ax.bar(x - width/2, mean_ei, width,
+                     label='EI')
+    bars_simple = ax.bar(x + width/2, mean_simple, width,
+                         label='simple')
+
+    relative_advantage = ((mean_ei - mean_simple) / (mean_ei + mean_simple) * 2).mean()
+    ax.set_xticks(x)
+    ax.set_xticklabels(env_names, rotation=30, ha='right')
+    ax.set_ylabel('Test accuracy')
+    ax.set_title(f'Model comparison across environments. EI Advantage: {relative_advantage:.2f}')
+    ax.legend()
+
+    if show_values:
+        ax.bar_label(bars_ei, fmt='%.2f', padding=2)
+        ax.bar_label(bars_simple, fmt='%.2f', padding=2)
+
+    plt.tight_layout()
+    plt.show()
 
 
 def plot_loss_curve(loss_log_ei, gradient_log_ei, loss_log_simple, gradient_log_simple,

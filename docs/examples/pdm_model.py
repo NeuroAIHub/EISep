@@ -10,7 +10,7 @@ from torch.nn import functional as F
 from matplotlib import pyplot as plt
 
 
-class EISepLSTM(nn.Module):
+class EISepRNN(nn.Module):
     """
     Custom multi-layer sequence LSTM with separate excitatory/inhibitory neurons.
     Input x: (seq_len, batch_size, feature_dim)
@@ -24,37 +24,48 @@ class EISepLSTM(nn.Module):
         self.hidden_size = hidden_size
         self.output_size = output_size
         # per-layer input → hidden
-
+        self.rec_filter   = nn.ReLU()
+        std = 1/ np.sqrt(hidden_size)
+        # if isinstance(self.rec_filter, nn.ReLU):
+        #     print('Using ReLU as recurrent filter')
+        #     std /= np.sqrt(1/2-1/2/np.pi)
+        # elif self.rec_filter is torch.abs:
+        #     print('Using absolute as recurrent filter')
+        #     std /= np.sqrt(1-2/np.pi)
+        # std = 0.1
         self.input_layer = nn.Linear(input_size, hidden_size)
-        self.Wrec_free = nn.Parameter(nn.ReLU()(torch.randn(hidden_size, hidden_size)*0.1/2))
+        self.Wrec_free = nn.Parameter(nn.ReLU()(torch.randn(hidden_size, hidden_size)*std))
         # print('Wrec_free1:', self.Wrec_free.device)
         # self.Wrec_free = nn.ReLU()(self.Wrec_free)  # Ensure non-negative recurrent weights
         # print('Wrec_free after ReLU1:', self.Wrec_free.device)
         ### test exponential init
         # self.Wrec_free = nn.Parameter(torch.FloatTensor(np.random.exponential(scale=1/np.sqrt(hidden_size), size=(hidden_size, hidden_size))))
-        self.bias = nn.Parameter(torch.randn(hidden_size)*0.1)
-        self.eimask_logit = nn.Parameter(torch.randn(hidden_size, 2)*0.1)
+        self.bias = nn.Parameter(torch.randn(hidden_size)*std)
+        self.eimask_logit = nn.Parameter(torch.randn(hidden_size, 2)*std)
         ### test fixed sign
         # self.eimask_logit = nn.Parameter(torch.zeros(hidden_size, 2))
         # self.eimask_logit.requires_grad = False # test for fixed sign
         # exc_idx = torch.randperm(hidden_size)  # 80% excitatory
         # self.eimask_logit[exc_idx[:int(hidden_size*0.8)], 0] = 1.0  # excitatory
         # self.eimask_logit[exc_idx[int(hidden_size*0.8):], 1] = 1.0  # inhibitory
+        # set higher inhibitory weight
+        # self.Wrec_free.data[:,exc_idx[:int(hidden_size*0.8)]] /= 4.0
 
 
         # map top-layer hidden → output
         self.output_layer = nn.Linear(hidden_size, output_size)
-        self.act          = nn.Tanh()
-        self.rec_filter   = torch.abs
+        self.act          = nn.Softplus()
+
 
         self.training = True
         ###
         # nn.init.orthogonal_(self.Wrec_free)  # Initialize recurrent weights orthogonally
-        nn.init.normal_(self.eimask_logit)
+        # self.Wrec_free.data[:,exc_idx[:int(hidden_size*0.8)]] /= 4.0
+        # nn.init.normal_(self.eimask_logit)
         for m in [self.input_layer, self.output_layer]:
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight)
-                nn.init.normal_(m.bias, mean=0, std=0.1)
+                nn.init.normal_(m.bias, mean=0, std=std)
 
     def forward(self, temperature, x, hx=None):
         # x: (T, B, D_in)
@@ -81,6 +92,7 @@ class EISepLSTM(nn.Module):
             if self.training:
                 mask = F.gumbel_softmax(self.eimask_logit,
                             tau=0.1, hard=False, dim=-1)
+                # mask = F.softmax(self.eimask_logit/temperature, dim=-1)
                 ei_code = mask[:, 0] - mask[:, 1]
             else:
                 ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
@@ -131,15 +143,6 @@ class EISepLSTM(nn.Module):
     def train(self, mode=True):
         self.training = mode
 
-    def _activation_derivative(self, postact):
-        """ Compute the derivative of the activation function.
-        preact: (B, H)
-        returns: (B, H) act'(preact)
-        """
-        if isinstance(self.act, torch.nn.ReLU):
-            return torch.where(postact > 0, 1.0, 0.0)
-        if isinstance(self.act, torch.nn.Tanh):
-            return 1 - postact ** 2
     def compute_lyapunov_spectrum(self, x, hx=None):
         """
         Return:
@@ -192,7 +195,7 @@ class EISepLSTM(nn.Module):
             A = torch.einsum('ij,bjk->bik', actual.T, Q)  # (B, H, H)
 
             # 再算 act'（每个 batch, 每个维度）
-            act_prime = activation_derivative(self.act, new_h)  # (B, H)
+            act_prime = activation_derivative(self.act, new_h, input_gate+rec_in)  # (B, H)
             # JQ = diag(act_prime) @ A; diag multiplies每一行
             JQ = act_prime.unsqueeze(-1) * A  # (B, H, H)
 
@@ -229,15 +232,18 @@ def load_model(prefix: str, num_h: int, ob_size: int, act_size: int, device: str
 
     return model
 
-def activation_derivative(act_module, postact):
+def activation_derivative(act_module, postact, preact=None):
     """ Compute the derivative of the activation function.
     preact: (B, H)
     returns: (B, H) act'(preact)
     """
     if isinstance(act_module, torch.nn.ReLU):
-        return torch.where(postact > 0, 1.0, 0.0)
+        return torch.where(preact > 0, 1.0, 0.0)
     if isinstance(act_module, torch.nn.Tanh):
         return 1 - postact ** 2
+    if isinstance(act_module, torch.nn.Softplus):
+        return 1 - torch.exp(-postact)
+    raise NotImplementedError(f"Derivative for {type(act_module)} not implemented.")
 
 class Net(nn.Module):
     def __init__(self, num_h, ob_size, act_size, entropy_loss=True):
@@ -245,7 +251,7 @@ class Net(nn.Module):
         self.hidden_size = num_h
         self.input_size = ob_size
         self.output_size = act_size
-        self.lstm = EISepLSTM(ob_size, num_h, act_size)
+        self.lstm = EISepRNN(ob_size, num_h, act_size)
         self.temperature = None
         self.entropy_loss = entropy_loss
         # self.linear = nn.Linear(num_h, act_size)
@@ -286,6 +292,14 @@ class Net(nn.Module):
         """
         return self.lstm.compute_lyapunov_spectrum(x, hx)
 
+    def get_weight_loss(self):
+        weight_loss = 0.0
+        weight_loss += self.lstm.Wrec_free.abs().mean()  # L1 regularization on recurrent weights
+        weight_loss += self.lstm.input_layer.weight.abs().mean()  # L1 regularization on input weights
+        weight_loss += self.lstm.output_layer.weight.abs().mean()  # L1 regular
+        return weight_loss
+
+
 
 class simpleRNN(nn.Module):
     """
@@ -297,18 +311,25 @@ class simpleRNN(nn.Module):
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.input_layer = nn.Linear(input_size, hidden_size)
-        self.Wrec_free = nn.Parameter(nn.ReLU()(torch.randn(hidden_size, hidden_size) * 0.1/2))
+        std = np.sqrt(1/hidden_size)
+        # std = 0.1
+        # control variable
+        # Wrec_free = nn.ReLU()(torch.randn(hidden_size, hidden_size) * std)
+        # mask = torch.where(torch.rand(hidden_size, hidden_size) > 0.5, 1, -1)  # Random mask for sparsity
+        # self.Wrec_free = nn.Parameter(Wrec_free * mask.float())  # Apply mask to recurrent weights
+        self.Wrec_free = nn.Parameter(torch.randn(hidden_size, hidden_size) * std)
+
         # print('Wrec_free:', self.Wrec_free.device)
         # self.Wrec_free = nn.ReLU()(self.Wrec_free)  # Ensure non-negative recurrent weights
         # print('Wrec_free after ReLU:', self.Wrec_free.device)
-        self.bias = nn.Parameter(torch.randn(hidden_size) * 0.1)
+        self.bias = nn.Parameter(torch.randn(hidden_size) * std)
         self.act = nn.Tanh()
         self.output_layer = nn.Linear(hidden_size, output_size)
         # nn.init.orthogonal_(self.Wrec_free)  # Initialize recurrent weights orthogonally
         for m in [self.input_layer, self.output_layer]:
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight)
-                nn.init.normal_(m.bias, mean=0, std=0.1)
+                nn.init.normal_(m.bias, mean=0, std=std)
 
     def forward(self, x, hx=None):
         # x: (T, B, D_in)
@@ -403,7 +424,7 @@ class simpleRNN(nn.Module):
             A = torch.einsum('ij,bjk->bik', self.Wrec_free.T, Q)  # (B, H, H)
 
             # 再算 act'（每个 batch, 每个维度）
-            act_prime = activation_derivative(self.act, new_h)  # (B, H)
+            act_prime = activation_derivative(self.act, new_h, input_gate+rec_in)  # (B, H)
             # JQ = diag(act_prime) @ A; diag multiplies每一行
             JQ = act_prime.unsqueeze(-1) * A  # (B, H, H)
 
@@ -458,3 +479,9 @@ class SimpleNet(nn.Module):
         Compute the Lyapunov spectrum of the model.
         """
         return self.lstm.compute_lyapunov_spectrum(x, hx)
+    def get_weight_loss(self):
+        weight_loss = 0.0
+        weight_loss += self.lstm.Wrec_free.abs().mean()
+        weight_loss += self.lstm.input_layer.weight.abs().mean()
+        weight_loss += self.lstm.output_layer.weight.abs().mean()
+        return weight_loss
