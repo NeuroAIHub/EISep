@@ -18,7 +18,7 @@ def init_model(ob_size, hidden_size, act_size, model_name):
     elif model_name == 'colei_adam':
         net = ColEI(ob_size=ob_size, num_h=hidden_size, act_size=act_size, optimizer='adam')
     elif model_name == 'dann_sgd':
-        net = DANN(ob_size=ob_size, num_h=hidden_size, act_size=act_size)
+        net = DANN(ob_size=ob_size, num_h=hidden_size, act_size=act_size, optimizer='sgd')
     elif model_name == 'dann_adam':
         net = DANN(ob_size=ob_size, num_h=hidden_size, act_size=act_size, optimizer='adam')
     elif model_name == 'dbpn':

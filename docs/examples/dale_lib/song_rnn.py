@@ -65,14 +65,14 @@ class ColumnEiCell(BaseRNNCell):
     def U(self):
         return self.U_pos @ self.D_U
 
-    def forward(self, rec_in):
+    def forward(self, x):
         """
         x: input of shape input_dim x batch_dim
            U is h x input_dim
            W is h x h
         """
         # print(self.U.shape, x.shape, self.W.shape, self.h.shape, self.b.shape)
-        self.z = rec_in.T + torch.mm(self.W, self.h) + self.b
+        self.z = torch.mm(self.U, x.T) + torch.mm(self.W, self.h) + self.b
         if self.nonlinearity is not None:
             self.h = self.nonlinearity(self.z)
         else:

@@ -7,7 +7,7 @@ import torch
 from matplotlib import pyplot as plt
 from torch import nn
 from torch.nn import functional as F
-from docs.examples.net.dale_util import activation_derivative
+from net.dale_util import activation_derivative
 
 
 class simpleRNN(nn.Module):

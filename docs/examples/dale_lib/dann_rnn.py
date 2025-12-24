@@ -72,7 +72,7 @@ class EiRNNCell(BaseRNNCell):
     def U(self):
         return self.Uex - torch.matmul(self.Uei, self.Uix)
 
-    def forward(self, rec_in):
+    def forward(self, x):
         """
         x: input of shape input_dim x batch_dim
            U is h x input_dim
@@ -81,14 +81,13 @@ class EiRNNCell(BaseRNNCell):
         # h x bs = (h x input *  input x bs) + (h x h * h x bs) + h
         # print(self.U.shape, x.shape, self.W.shape, self.h.shape)
 
-        if self.training == False: self.z = rec_in.T + torch.mm(self.W, self.h) + self.b
-        else:
-            # Uex_drop = F.dropout(self.Uex, p=self.U_dropconnect) * (1-self.U_dropconnect)
-            # Uix_drop = F.dropout(self.Uix , p=self.U_dropconnect) * (1-self.U_dropconnect)
+        if self.training == False: self.z = torch.mm(self.U, x.T) + torch.mm(self.W, self.h) + self.b
+        else: 
+            Uex_drop = F.dropout(self.Uex, p=self.U_dropconnect) * (1-self.U_dropconnect)
+            Uix_drop = F.dropout(self.Uix , p=self.U_dropconnect) * (1-self.U_dropconnect)
             Wex_drop = F.dropout(self.Wex, p=self.W_dropconnect) * (1-self.W_dropconnect)
             Wix_drop = F.dropout(self.Wix , p=self.W_dropconnect) * (1-self.W_dropconnect)
-            # print('U:', self.U.shape, 'x:', x.shape, 'W:', self.W.shape, 'h:', self.h.shape )
-            self.z = rec_in.T + torch.mm(Wex_drop - torch.matmul(self.Wei, Wix_drop), self.h) + self.b
+            self.z = torch.mm(Uex_drop - torch.matmul(self.Uei, Uix_drop), x.T) + torch.mm(Wex_drop - torch.matmul(self.Wei, Wix_drop), self.h) + self.b
         if self.nonlinearity is not None: self.h = self.nonlinearity(self.z)
         else: self.h = self.z
         return self.h.T
@@ -98,5 +97,5 @@ class EiRNNCell(BaseRNNCell):
 if __name__ == "__main__":
     # In order for imports to work correctly:
     # run in the shell 'export PYTHONPATH=$PYTHONPATH:~/dann-rnns'
-    #
+    # 
     pass

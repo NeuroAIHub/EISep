@@ -12,7 +12,7 @@ from dale_lib.dense_layers import DenseLayer, EiDense, ColumnEiDense
 from dale_lib.song_rnn import ColumnEiCell
 from dale_lib.update_policies import EiRNN_Adam_UpdatePolicy, ColumnEiAdam_Clip, EiRNN_cSGD_UpdatePolicy, DalesANN_cSGD_UpdatePolicy, ColumnEiSGD_Clip, ColumnEiDenseSGD
 from dale_lib.init_policies import EiDenseWeightInit_WexMean, U_TorchInit, W_TorchInit, ColumnEiCell_W_InitPolicy, ColumnEi_FirstCell_U_InitPolicy, EiRNNCell_U_InitPolicy, EiRNNCell_W_InitPolicy, W_UniformInit
-from docs.examples.net.dale_util import activation_derivative
+from net.dale_util import activation_derivative
 
 
 class ColEI(nn.Module):

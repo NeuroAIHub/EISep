@@ -95,12 +95,12 @@ class DenseLayer(BaseDenseLayer):
 
     def forward(self, x):
         """
-        x is batch_dim x input_dim,
+        x is batch_dim x input_dim, 
         therefore x.T as W is ne x input_dim ??? Why I got error
         """
         self.x = x.T
         self.z = torch.mm(self.W, self.x) + self.b
-
+        
         if self.nonlinearity is not None:
             self.h = self.nonlinearity(self.z)
         else:
@@ -139,7 +139,7 @@ class EiDense(BaseDenseLayer):
 
     def forward(self, x):
         """
-        x is batch_dim x input_dim,
+        x is batch_dim x input_dim, 
         therefore x.T as W is ne x input_dim ??? Why I got error?
         """
         self.x = x.T
@@ -153,7 +153,7 @@ class EiDense(BaseDenseLayer):
         #     self.z.retain_grad()
         #     self.h.retain_grad()
         return self.h.T
-
+        
 class EiDenseWithShunt(EiDense):
     """
     Class modeling a Feed-forward inhibition layer including a shunting
@@ -171,7 +171,7 @@ class EiDenseWithShunt(EiDense):
         self.g     = nn.Parameter(torch.ones(size=(self.ne,1)))
         self.epsilon = 1e-8
 
-
+    
     @property
     def alpha_property(self,x):
         """
@@ -185,7 +185,7 @@ class EiDenseWithShunt(EiDense):
 
     def forward(self, x):
         """
-        x is batch_dim x input_dim,
+        x is batch_dim x input_dim, 
         therefore x.T as W is ne x input_dim
         """
         self.x = x.T
@@ -236,7 +236,7 @@ class EiDenseWithShuntLayerNorm(EiDense):
 
     def forward(self, x):
         """
-        x is batch_dim x input_dim,
+        x is batch_dim x input_dim, 
         therefore x.T as W is ne x input_dim
         """
         self.x = x.T
@@ -254,7 +254,7 @@ class EiDenseWithShuntLayerNorm(EiDense):
 
         # ne x batch = nex1*ne x batch + nex1
         self.z = self.g*self.z_dot + self.b
-
+        
         if self.nonlinearity is not None:
             self.h = self.nonlinearity(self.z)
         else:
@@ -297,7 +297,7 @@ class ColumnEiDense(BaseDenseLayer):
 
     def forward(self, x):
         """
-        x is batch_dim x input_dim,
+        x is batch_dim x input_dim, 
         therefore x.T as W is ne x input_dim ??? Why I got error?
         """
         self.x = x.T
@@ -317,7 +317,7 @@ class EgDenseLayer(DenseLayer):
         self.b_pos = nn.Parameter(torch.ones(n_output,1))
         self.b_neg = nn.Parameter(torch.ones(n_output,1)*-1)
         del self.b
-
+        
     @property
     def b(self):
         return self.b_pos + self.b_neg
@@ -328,7 +328,7 @@ class EgEiDense(EiDense):
         self.b_pos = nn.Parameter(torch.ones(self.ne,1))
         self.b_neg = nn.Parameter(torch.ones(self.ne,1)*-1)
         del self.b
-
+    
     @property
     def b(self):
         return self.b_pos + self.b_neg

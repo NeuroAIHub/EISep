@@ -11,15 +11,16 @@ from dale_lib import utils
 
 # export
 def get_mnist_datasets():
-    network_mnist_folder = "/network/datasets/mnist.var/mnist_torchvision"
-    mnist_folder   = utils.copy_folder_to_slurm_tmpdir(network_mnist_folder)
+    # network_mnist_folder = "/network/datasets/mnist.var/mnist_torchvision"
+    # mnist_folder   = utils.copy_folder_to_slurm_tmpdir(network_mnist_folder)
+    mnist_folder = '.'
     dataset_transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
 
     full_trainset = torchvision.datasets.MNIST(root=mnist_folder, train=True,
-                                               download=False, transform=dataset_transform)
+                                               download=True, transform=dataset_transform)
 
     test_set  = torchvision.datasets.MNIST(root=mnist_folder, train=False,
-                                          download=False, transform=dataset_transform)
+                                          download=True, transform=dataset_transform)
 
     return full_trainset, test_set
 
@@ -157,5 +158,5 @@ def adding_problem_generator(batch_size, seq_len, high=1):
 if __name__ == "__main__":
     # In order for imports to work correctly:
     # run in the shell 'export PYTHONPATH=$PYTHONPATH:~/dann-rnns'
-    #
+    # 
     pass
