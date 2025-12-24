@@ -9,7 +9,8 @@ from torch.nn import functional as F
 
 from dale_lib.dense_layers import DenseLayer, EiDense, ColumnEiDense
 from dale_lib.dann_rnn import EiRNNCell
-from dale_lib.update_policies import EiRNN_Adam_UpdatePolicy, ColumnEiAdam_Clip, EiRNN_cSGD_UpdatePolicy, DalesANN_cSGD_UpdatePolicy, ColumnEiSGD_Clip, ColumnEiDenseSGD
+from dale_lib.update_policies import EiRNN_Adam_UpdatePolicy, ColumnEiAdam_Clip, EiRNN_cSGD_UpdatePolicy, \
+        DalesANN_cSGD_UpdatePolicy, DalesANN_cAdam_UpdatePolicy, ColumnEiSGD_Clip, ColumnEiDenseSGD
 from dale_lib.init_policies import EiDenseWeightInit_WexMean, U_TorchInit, W_TorchInit, ColumnEiCell_W_InitPolicy, ColumnEi_FirstCell_U_InitPolicy, EiRNNCell_U_InitPolicy, EiRNNCell_W_InitPolicy, W_UniformInit
 from net.dale_util import activation_derivative
 
@@ -22,7 +23,7 @@ class DANN(nn.Module):
         self.input_size = ob_size
         self.output_size = act_size
         n_hidden = self.hidden_size
-        max_gn = 10
+        max_gn = None
         non_linearity = nn.ReLU()
         i2h_init_policy=EiRNNCell_U_InitPolicy()
         h2h_init_policy=EiRNNCell_W_InitPolicy(random=False)
@@ -35,14 +36,17 @@ class DANN(nn.Module):
                     nonlinearity=non_linearity,
                     i2h_init_policy=i2h_init_policy,
                     h2h_init_policy=h2h_init_policy)
+        self.output_layer = EiDense(n_hidden, act_size, max(act_size//(9+1),1), nonlinearity=None, weight_init_policy=EiDenseWeightInit_WexMean(numerator=2))
         if optimizer == 'sgd':
             self.danncell.update_policy = EiRNN_cSGD_UpdatePolicy(max_grad_norm=max_gn)
+            self.output_layer.update_policy = DalesANN_cSGD_UpdatePolicy(max_grad_norm=max_gn)
         elif optimizer == 'adam':
             self.danncell.update_policy = EiRNN_Adam_UpdatePolicy(max_grad_norm=max_gn)
+            self.output_layer.update_policy = DalesANN_cAdam_UpdatePolicy(max_grad_norm=max_gn)
         # self.output_layer = DenseLayer(n_hidden, act_size, nonlinearity=None)
-        self.output_layer = EiDense(n_hidden, act_size, max(act_size//(9+1),1), nonlinearity=None, weight_init_policy=EiDenseWeightInit_WexMean(numerator=2))
-        self.output_layer.update_policy = DalesANN_cSGD_UpdatePolicy(max_grad_norm=max_gn)
         self.entropy_loss = False
+        self.danncell.init_weights()
+        self.output_layer.init_weights()
     def forward(self, x, hx=None):
         # x: (T, B, D_in)
         T, B, D_in = x.shape
@@ -132,11 +136,9 @@ class DANN(nn.Module):
         return lambda_i, lambda_j
     def state_dict(self):
         return {
-            'input_layer': self.input_layer.state_dict(),
             'danncell': self.danncell.state_dict(),
             'output_layer': self.output_layer.state_dict(),
         }
     def load_state_dict(self, state_dict):
-        self.input_layer.load_state_dict(state_dict['input_layer'])
         self.danncell.load_state_dict(state_dict['danncell'])
         self.output_layer.load_state_dict(state_dict['output_layer'])

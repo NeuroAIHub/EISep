@@ -27,7 +27,7 @@ def get_torchvision_data(dataset_name, directory = str(Path.home()/ "scratch/dat
     Note: Think some of the torchivison datasets have slightly different formats, for
     example Imagenet has a "split" arg not train.
     """
-    data_root = Path(directory)
+    data_root = Path(directory) 
     if dataset_name == 'MNIST':
         torchvision.datasets.MNIST(root=data_root, train=True, download=True)
         torchvision.datasets.MNIST(root=data_root, train=False, download=True)
@@ -67,34 +67,34 @@ class MNISTDataset(torch.utils.data.Dataset):
                           only for the conv models (i.e flatten is False).                
         """
         self.loadpath = path
-        self.x, self.y = torch.load(path)
+        self.x, self.y = torch.load(path) 
         self.x = self.x.float().div(255)
         self.n_classes = len(self.y.unique())
-
-        if flatten:
+        
+        if flatten: 
             self.x = self.x.reshape(self.x.shape[0],-1).contiguous()
         else:
             # unsqueeze so we have BCHW
             self.x = self.x.unsqueeze(1).contiguous()
-
+            
         if not flatten and named_tensors:
-            # this throws error in current pytorch version
+            # this throws error in current pytorch version 
             self.x = self.x.refine_names('batch', 'channels', 'rows', 'columns')
 
         if to_device:
             device = utils.get_device()
             self.x = self.x.to(device)
             self.y = self.y.to(device)
-
+            
         if permute:
-            raise
-
+            raise 
+            
     def __len__(self):
         return self.x.shape[0]
-
+    
     def __getitem__(self, idx):
         return self.x[idx], self.y[idx]
-
+    
     @property
     def data_shape(self):
         # grabs first datapoint which will be (x,y) tuple so [0] again for x
@@ -103,14 +103,14 @@ class MNISTDataset(torch.utils.data.Dataset):
     @property
     def n_pixels(self):
         return np.prod(self.data_shape)
-
+    
     def __repr__(self):
         s = super().__repr__()
         s += '\nData loaded from: '+str(self.loadpath)
         s += '\n'
         s += f'Data is {self.__len__()} examples of shape {self.data_shape}'
         return s
-
+    
 
 def get_data(dataset_name, batch_size, directory=f"{os.environ['HOME']}/data", seed=7,
              to_device=False, validation_size=10000, flatten=False,
@@ -132,15 +132,15 @@ def get_data(dataset_name, batch_size, directory=f"{os.environ['HOME']}/data", s
     data_dir = get_torchvision_data(dataset_name, directory)
     if copy_to_slurmtmpdir:
         data_dir = utils.copy_folder_to_slurm_tmpdir(data_dir)
-
+    
     train_dataset = MNISTDataset(data_dir/"processed"/"training.pt", flatten, to_device=to_device)
     if test_set:
         test_dataset = MNISTDataset(data_dir/"processed"/"test.pt", flatten, to_device=to_device)
         test_loader  = get_dataloader(test_dataset,batch_size,  shuffle=False)
         train_loader = get_dataloader(train_dataset,batch_size, shuffle=True) # Should be true
         return train_loader, test_loader
-
-    else:
+    
+    else:       
         train_loader, valid_loader = get_train_val_dataloaders(train_dataset,
                                                                batch_size,
                                                                validation_size=validation_size,
@@ -165,12 +165,12 @@ def get_dataloader(dataset,
         sampler = RandomSampler(dataset)
     else:
         sampler = SequentialSampler(dataset)
-    dataloader = torch.utils.data.DataLoader(dataset,
+    dataloader = torch.utils.data.DataLoader(dataset, 
                                              batch_size,
                                              sampler=sampler,
-                                             num_workers=num_workers,
+                                             num_workers=num_workers, 
                                              pin_memory=pin_memory)
-
+    
     return dataloader
 
 def get_mnist_datasets(flatten_bool=True):
@@ -185,16 +185,16 @@ def get_mnist_datasets(flatten_bool=True):
 
     full_trainset = MNISTDataset(mnist_folder/"MNIST/processed/training.pt", flatten_bool)
     test_set = MNISTDataset(mnist_folder/"MNIST/processed/test.pt", flatten_bool)
-
+    
     return full_trainset, test_set
 
 def get_fashion_mnist_datasets(flatten_bool=True):
     fashion_mnist_path = get_torchvision_data("FashionMNIST")
     fashion_mnist_path_slurm = utils.copy_folder_to_slurm_tmpdir(fashion_mnist_path)
-
+    
     full_trainset = MNISTDataset(fashion_mnist_path_slurm/"processed/training.pt", flatten_bool)
     test_set = MNISTDataset(fashion_mnist_path_slurm/"processed/test.pt", flatten_bool)
-
+    
     return full_trainset, test_set
 
 def get_mnist_train_test_dataloaders(batch_size, test_batch_size=None, shuffle=True,

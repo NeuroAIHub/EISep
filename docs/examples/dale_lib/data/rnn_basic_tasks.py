@@ -63,5 +63,5 @@ def adding_problem_generator(batch_size, seq_len, high=1):
 if __name__ == "__main__":
     # In order for imports to work correctly:
     # run in the shell 'export PYTHONPATH=$PYTHONPATH:~/dann-rnns'
-    #
+    # 
     pass

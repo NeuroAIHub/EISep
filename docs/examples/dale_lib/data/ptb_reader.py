@@ -127,5 +127,5 @@ def load_ptb():
 if __name__ == "__main__":
     # In order for imports to work correctly:
     # run in the shell 'export PYTHONPATH=$PYTHONPATH:~/dann-rnns'
-    #
+    # 
     pass

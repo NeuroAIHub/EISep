@@ -15,14 +15,14 @@ class DBPN(nn.Module):
         self.frac_in = 1-self.frac_ex
         self.index_ranges = [(0,int(num_h*self.frac_ex)),(int(num_h*self.frac_ex),num_h)]
         W_init = initialize_weights(num_h, self.index_ranges, self.signs)
-        self.rnn.weight_hh_l0.data = torch.from_numpy(W_init).float()
+        self.rnn.weight_hh_l0.data = torch.from_numpy(W_init).float().to(self.rnn.weight_hh_l0.device)
         self.fc = nn.Linear(num_h, act_size)
         self.n_classes = act_size
         self.entropy_loss = False
 
 
     def forward(self, x):
-        x = torch.transpose(x, 0, 1)
+        x = torch.transpose(x, 0, 1) # [T, B, D_in] -> [B, T, D_in]
         h0 = torch.zeros(1, x.size(0), self.hidden_size).to(x.device)
         self.device = x.device
         nSamp, nSteps, inDim = x.shape
@@ -40,7 +40,7 @@ class DBPN(nn.Module):
 
             ## Final prediction at every timestep
             pred[:,ii,:] = self.fc(ops[:, ii, :].clone())
-        out = torch.transpose(pred, 0, 1)
+        out = torch.transpose(pred, 0, 1) # [B, T, D_out] -> [T, B, D_out]
         return out, None, (htt, htt, torch.zeros((1,)))
 
     def update(self, optimizer):

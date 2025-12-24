@@ -10,7 +10,7 @@ from torch.nn import functional as F
 
 from dale_lib.dense_layers import DenseLayer, EiDense, ColumnEiDense
 from dale_lib.song_rnn import ColumnEiCell
-from dale_lib.update_policies import EiRNN_Adam_UpdatePolicy, ColumnEiAdam_Clip, EiRNN_cSGD_UpdatePolicy, DalesANN_cSGD_UpdatePolicy, ColumnEiSGD_Clip, ColumnEiDenseSGD
+from dale_lib.update_policies import EiRNN_Adam_UpdatePolicy, ColumnEiAdam_Clip, EiRNN_cSGD_UpdatePolicy, DalesANN_cSGD_UpdatePolicy, ColumnEiSGD_Clip, ColumnEiDenseSGD, ColumnEiDenseAdam
 from dale_lib.init_policies import EiDenseWeightInit_WexMean, U_TorchInit, W_TorchInit, ColumnEiCell_W_InitPolicy, ColumnEi_FirstCell_U_InitPolicy, EiRNNCell_U_InitPolicy, EiRNNCell_W_InitPolicy, W_UniformInit
 from net.dale_util import activation_derivative
 
@@ -23,21 +23,26 @@ class ColEI(nn.Module):
         self.output_size = act_size
         n_hidden = self.hidden_size
         max_gn = 10
-        non_linearity = nn.Softplus()
+        non_linearity = nn.ReLU()
         i2h_init_policy=ColumnEi_FirstCell_U_InitPolicy(dataset='PennTreebank')
         h2h_init_policy=ColumnEiCell_W_InitPolicy(radius=1.5)
-        self.input_layer = DenseLayer(ob_size, n_hidden, nonlinearity=None)
+        # self.input_layer = DenseLayer(ob_size, n_hidden, nonlinearity=None)
         if optimizer == 'sgd':
             update_policy = ColumnEiSGD_Clip(max=max_gn)
+            output_layer_update_policy = ColumnEiDenseSGD(max=max_gn)
         elif optimizer == 'adam':
             update_policy = ColumnEiAdam_Clip(max=max_gn)
-        self.colcell = ColumnEiCell(n_input=n_hidden, layer_params=(n_hidden, 9),
+            output_layer_update_policy = ColumnEiDenseAdam(max=max_gn)
+        self.colcell = ColumnEiCell(n_input=self.input_size, layer_params=(n_hidden, 9),
                             nonlinearity=non_linearity,
                             i2h_init_policy=i2h_init_policy,
                             h2h_init_policy=h2h_init_policy,
                             update_policy=update_policy)
-        self.output_layer = DenseLayer(n_hidden, act_size, nonlinearity=None)
+        # self.output_layer = DenseLayer(n_hidden, act_size, nonlinearity=None)
+        self.output_layer = ColumnEiDense(n_hidden, (self.output_size, 9), nonlinearity=None, update_policy=output_layer_update_policy)
         self.entropy_loss = False
+        self.colcell.init_weights()
+        self.output_layer.init_weights()
     def forward(self, x, hx=None):
         # x: (T, B, D_in)
         T, B, _ = x.shape
@@ -53,20 +58,20 @@ class ColEI(nn.Module):
         outputs = torch.zeros(T, B, self.output_size, device=device)  # (T, B, H)
         hs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
         cs = torch.zeros(T, B, self.hidden_size, device=device)
-        rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
+        # rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
         # loop over time
         self.colcell.reset_hidden(B)
         for t in range(T):
             layer_in = x[t]
-            input_gate = self.input_layer(layer_in)
-            new_h = self.colcell(input_gate)
+            # input_gate = self.input_layer(layer_in)
+            new_h = self.colcell(layer_in)
             hs[t] = new_h
             outputs[t] = self.output_layer(new_h)
 
             h = new_h
         return outputs, None, (hs, cs, torch.zeros(T,))
     def update(self, lr, max_grad_norm=10):
-        self.input_layer.update(lr=lr, max_grad_norm=max_grad_norm)
+        # self.input_layer.update(lr=lr, max_grad_norm=max_grad_norm)
         self.colcell.update(lr=lr, max_grad_norm=max_grad_norm)
         self.output_layer.update(lr=lr, max_grad_norm=max_grad_norm)
     def get_actual_weight(self):
@@ -121,11 +126,9 @@ class ColEI(nn.Module):
         return lambda_i, lambda_j
     def state_dict(self):
         return {
-            'input_layer': self.input_layer.state_dict(),
             'colcell': self.colcell.state_dict(),
             'output_layer': self.output_layer.state_dict(),
         }
     def load_state_dict(self, state_dict):
-        self.input_layer.load_state_dict(state_dict['input_layer'])
         self.colcell.load_state_dict(state_dict['colcell'])
         self.output_layer.load_state_dict(state_dict['output_layer'])

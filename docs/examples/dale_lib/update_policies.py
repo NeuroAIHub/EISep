@@ -170,6 +170,82 @@ class EiDense_clamp_mixin():
         if hasattr(layer, 'g'):
             layer.g.data   = torch.clamp(layer.g, min=0)
 
+
+class EiDense_AdamUpdatePolicy_final:
+    """
+    Adam update for EiDenseWithShunt-like layers.
+    Mirrors your EiRNN_AdamUpdatePolicy_final style and naming.
+
+    Expected parameters on layer (some optional):
+      - Wex, Wei, Wix (required)
+      - b (optional / may not require grad)
+      - g (optional)
+      - alpha (optional)
+    """
+    def __init__(self, beta1=0.9, beta2=0.999, eps=1e-8, **kwargs):
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.eps = eps
+
+        # single-layer assumption => name-keyed moments are OK (as you requested)
+        self.m = {}
+        self.v = {}
+        self.t = 0
+
+    @torch.no_grad()
+    def update(self, layer, **kwargs):
+        lr = kwargs["lr"]
+        self.t += 1
+
+        # Parameter names to update (match EiDense_UpdatePolicy targets)
+        param_names = ["Wex", "Wei", "Wix"]
+
+        # Optional params (match EiDense_UpdatePolicy behavior)
+        if hasattr(layer, "g"):
+            param_names.append("g")
+        if hasattr(layer, "alpha"):
+            param_names.append("alpha")
+        # Only update b if it exists and requires grad (like your SGD version)
+        if hasattr(layer, "b") and getattr(layer.b, "requires_grad", False):
+            param_names.append("b")
+
+        # Initialize moments
+        for name in param_names:
+            param = getattr(layer, name, None)
+            if param is None:
+                continue
+            if name not in self.m:
+                self.m[name] = torch.zeros_like(param)
+                self.v[name] = torch.zeros_like(param)
+
+        # Adam update
+        for name in param_names:
+            param = getattr(layer, name, None)
+            if param is None or param.grad is None:
+                continue
+
+            grad = param.grad.detach()
+
+            self.m[name] = self.beta1 * self.m[name] + (1 - self.beta1) * grad
+            self.v[name] = self.beta2 * self.v[name] + (1 - self.beta2) * (grad ** 2)
+
+            m_hat = self.m[name] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[name] / (1 - self.beta2 ** self.t)
+
+            param -= lr * m_hat / (torch.sqrt(v_hat) + self.eps)
+
+        # Clamp positivity (match EiDense_UpdatePolicy)
+        for name in ["Wix", "Wex", "Wei"]:
+            p = getattr(layer, name, None)
+            if p is not None:
+                p.data = torch.clamp(p, min=0)
+
+        if hasattr(layer, "g"):
+            layer.g.data = torch.clamp(layer.g, min=0)
+        # alpha is not clamped (used via exp in forward, as you noted)
+
+
+
 class WClampMixin():
     def __init__(self,**kwargs):
         """
@@ -443,6 +519,7 @@ class EiRNN_AdamUpdatePolicy_final:
             param = getattr(layer, name, None)
             grad = getattr(param, "grad", None)
             if param is not None and grad is not None:
+                grad = param.grad.detach()
                 self.m[name] = self.beta1 * self.m[name] + (1 - self.beta1) * grad
                 self.v[name] = self.beta2 * self.v[name] + (1 - self.beta2) * (grad**2)
                 m_hat = self.m[name] / (1 - self.beta1**self.t)
@@ -555,6 +632,73 @@ class ColumnEiDenseSGD:
         if self.ablate_ii:
             layer.W_pos.data[-layer.ni:,-layer.ni:] = 0
             
+class ColumnEiDenseAdam:
+    """
+    Adam version of ColumnEiDenseSGD.
+
+    Matches the SGD version's behavior:
+      - per-parameter (tensorwise) grad clipping on b and W_pos using L2 norm
+      - update b and W_pos
+      - clamp W_pos >= 0 if layer.clamp
+      - optionally ablate the II block after clamp
+    """
+    def __init__(self, max=None, ablate_ii=False, beta1=0.9, beta2=0.999, eps=1e-8):
+        self.max = max
+        self.ablate_ii = ablate_ii
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.eps = eps
+
+        self.m = {}
+        self.v = {}
+        self.t = 0
+
+    @torch.no_grad()
+    def update(self, layer, **args):
+        lr = args["lr"]
+        self.t += 1
+
+        # --- per-tensor grad clipping (same rule as SGD) ---
+        if self.max is not None:
+            if layer.b.grad is not None:
+                b_norm = layer.b.grad.detach().norm(2)
+                if b_norm > self.max:
+                    layer.b.grad.mul_(self.max / (b_norm + 1e-12))
+
+            if layer.W_pos.grad is not None:
+                W_norm = layer.W_pos.grad.detach().norm(2)
+                if W_norm > self.max:
+                    layer.W_pos.grad.mul_(self.max / (W_norm + 1e-12))
+
+        # --- initialize moments ---
+        for name in ["b", "W_pos"]:
+            if name not in self.m:
+                p = getattr(layer, name)
+                self.m[name] = torch.zeros_like(p)
+                self.v[name] = torch.zeros_like(p)
+
+        # --- Adam step ---
+        for name in ["b", "W_pos"]:
+            p = getattr(layer, name)
+            if p.grad is None:
+                continue
+            g = p.grad.detach()
+
+            self.m[name] = self.beta1 * self.m[name] + (1 - self.beta1) * g
+            self.v[name] = self.beta2 * self.v[name] + (1 - self.beta2) * (g * g)
+
+            m_hat = self.m[name] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[name] / (1 - self.beta2 ** self.t)
+
+            p -= lr * m_hat / (torch.sqrt(v_hat) + self.eps)
+
+        # --- clamp + ablate (same order as SGD) ---
+        if layer.clamp:
+            layer.W_pos.data = torch.clamp(layer.W_pos, min=0)
+        if self.ablate_ii:
+            layer.W_pos.data[-layer.ni:, -layer.ni:] = 0
+
+
 
 class ColumnEiSGD:
     @torch.no_grad()
@@ -622,7 +766,7 @@ class ColumnEiAdam_Clip:
                 self.m[name] = torch.zeros_like(getattr(layer, name))
                 self.v[name] = torch.zeros_like(getattr(layer, name))
 
-        grads = {"b": layer.b.grad, "W_pos": layer.W_pos.grad, "U_pos": layer.U_pos.grad}
+        grads = {"b": layer.b.grad.detach(), "W_pos": layer.W_pos.grad.detach(), "U_pos": layer.U_pos.grad.detach()}
 
         # Gradient clipping
         if self.max is not None:
@@ -630,6 +774,7 @@ class ColumnEiAdam_Clip:
                 if grads[name] is not None:
                     norm = grads[name].norm(2)
                     if norm > self.max:
+                        getattr(layer, name).grad.mul_(self.max / norm)
                         grads[name] *= self.max / norm
 
         # Adam update
@@ -687,6 +832,19 @@ class DalesANN_cSGD_UpdatePolicy(BaseUpdatePolicy, cSGD_Mixin, ClipGradNorm_Mixi
         super(DalesANN_cSGD_UpdatePolicy, self).__init__()
         self.max_grad_norm=max_grad_norm
 
+class DalesANN_cAdam_UpdatePolicy(BaseUpdatePolicy, cSGD_Mixin, ClipGradNorm_Mixin, EiDense_AdamUpdatePolicy_final):
+    """
+    Adam version of DalesANN_cSGD_UpdatePolicy.
+
+    Keeps the same MRO structure as your cSGD+clip+SGD policy:
+      - cSGD_Mixin: rescales inhibitory grads (Wix/Wei/alpha) BEFORE optimizer step
+      - ClipGradNorm_Mixin: optional norm clipping BEFORE optimizer step
+      - EiDense_AdamUpdatePolicy_final: Adam step + positivity clamps
+    """
+    def __init__(self, max_grad_norm=None, beta1=0.9, beta2=0.999, eps=1e-8):
+        super(DalesANN_cAdam_UpdatePolicy, self).__init__()
+        self.max_grad_norm = max_grad_norm
+        # beta1/beta2/eps will be set by EiDense_AdamUpdatePolicy_final.__init__ via BaseUpdatePolicy
 
 class DalesANN_conv_cSGD_UpdatePolicy(BaseUpdatePolicy,
                                       Conv_cSGD_Mixin, DalesCNN_SGD_UpdatePolicy):
