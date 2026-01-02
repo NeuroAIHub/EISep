@@ -42,6 +42,31 @@ class DBPN(nn.Module):
             pred[:,ii,:] = self.fc(ops[:, ii, :].clone())
         out = torch.transpose(pred, 0, 1) # [B, T, D_out] -> [T, B, D_out]
         return out, None, (htt, htt, torch.zeros((1,)))
+    def sc_forward(self, x, sparsity_mask):
+        x = torch.transpose(x, 0, 1) # [T, B, D_in] -> [B, T, D_in]
+        h0 = torch.zeros(1, x.size(0), self.hidden_size).to(x.device)
+        self.device = x.device
+        nSamp, nSteps, inDim = x.shape
+
+        ops = torch.zeros(nSamp,nSteps,self.hidden_size, requires_grad=False).to(self.device)
+        pred = torch.zeros(nSamp,nSteps,self.n_classes, requires_grad=False).to(self.device)
+
+        w = self.rnn.weight_hh_l0.detach()
+        wm = w*sparsity_mask
+        self.rnn.weight_hh_l0.data = wm
+
+        for ii in range(nSteps):
+            ip = torch.unsqueeze(x[:,ii,:],1)
+            op, ht = self.rnn(ip,h0) ## pass 1 timestep through RNN
+            fr_mask = ht.clone()>0
+            htt = fr_mask*ht.clone() ## mask firing rate
+            h0 = htt ## update hidden state
+            ops[:,ii,:] = torch.squeeze(op.clone())
+
+            ## Final prediction at every timestep
+            pred[:,ii,:] = self.fc(ops[:, ii, :].clone())
+        out = torch.transpose(pred, 0, 1) # [B, T, D_out] -> [T, B, D_out]
+        return out, None, (htt, htt, torch.zeros((1,)))
 
     def update(self, optimizer):
         optimizer.step()

@@ -11,6 +11,7 @@ from net.eisep import EISepNet
 from net.simple import SimpleNet, Ccstr_SimpleNet
 from net.dbp import DBPN
 from net.entryei import EntryEINet
+import os
 
 def init_model(ob_size, hidden_size, act_size, model_name):
     if model_name == 'colei_sgd':
@@ -34,10 +35,19 @@ def init_model(ob_size, hidden_size, act_size, model_name):
             entropy_loss = False
         else:
             entropy_loss = True
-        net = EISepNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size, entropy_loss=entropy_loss)
+        if model_name == 'absolute_eisep':
+            net = EISepNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size, entropy_loss=entropy_loss, rec_filter='abs')
+        else:
+            net = EISepNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size, entropy_loss=entropy_loss)
+
     elif 'simple' in model_name:
         if 'ccstr' in model_name:
             net = Ccstr_SimpleNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size)
         else:
             net = SimpleNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size)
     return net
+
+def savefig(figpath):
+    os.makedirs(os.path.dirname(figpath), exist_ok=True)
+    plt.savefig(figpath, dpi=400)
+    print(figpath)

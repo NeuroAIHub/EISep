@@ -92,7 +92,57 @@ class simpleRNN(nn.Module):
         c_seq = torch.stack(cs, dim=0)  # (T, B, H)
         return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
 
+    def sc_forward(self, x, sparsity_mask, hx=None):
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
 
+        # init or unpack hidden/cell: (L, B, H)
+        if hx is None:
+            h = x.new_zeros(B, self.hidden_size)
+            c = x.new_zeros(B, self.hidden_size)
+        else:
+            h, c = hx
+
+        outputs = []
+        hs = []
+        cs = []
+        rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
+        # loop over time
+        for t in range(T):
+            layer_in = x[t]  # (B, D_in) or (B, H)
+            # no loop over layers
+            input_gate = self.input_layer(layer_in)  # (B, H)
+
+            # 3) rec input
+            assert self.Wrec_free.shape == sparsity_mask.shape
+            actual = self.Wrec_free * sparsity_mask
+            rec_in = h @ actual + self.bias          # (B, H)
+            # 4) new hidden
+            new_h    = self.act(input_gate + rec_in)                   # (B, H)
+
+            # new_h.append(h_i)
+            # new_c.append(c[i])   # 如果以后要更新 c_i，在这里替换
+            # layer_in = h_i       # feed to next layer
+            new_c = c
+
+
+            # stack per-layer states
+            # h = torch.stack(new_h, dim=0)  # (L, B, H)
+            # c = torch.stack(new_c, dim=0)
+            hs.append(new_h)  # (B, H)
+            cs.append(new_c)  # (B, H)
+            rec_ins[t] = rec_in
+            h = new_h  # (B, H)
+            c = new_c  # (B, H)
+            # project top-layer hidden to output
+            outputs.append(self.output_layer(new_h))  # (B, H)
+
+        # (T, B, H)
+        output_seq = torch.stack(outputs, dim=0)
+        h_seq = torch.stack(hs, dim=0)  # (T, B, H)
+        c_seq = torch.stack(cs, dim=0)  # (T, B, H)
+        return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
 
     def compute_lyapunov_spectrum(self, x, hx=None):
         """Return:
@@ -332,6 +382,10 @@ class SimpleNet(nn.Module):
         out, hidden = self.lstm(x)
         # print('history shape:', history.shape, 'hidden shape:', hidden.shape)
         return out, None, hidden
+    def sc_forward(self, x, sparsity_mask):
+        out, hidden = self.lstm.sc_forward(x=x, sparsity_mask=sparsity_mask)
+        return out, None, hidden
+        
     def init_hidden(self, batch_size, device):
         h0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
         c0 = torch.zeros(1, batch_size, self.hidden_size).to(device)

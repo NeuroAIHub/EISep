@@ -51,6 +51,8 @@ class RL_Hidden_Buffer():
     def save(self, save_path):
         pkl.dump(self, open(save_path, 'wb'))
         print('ptr:', self.ptr, save_path)
+    def set_episode_rewards(self, episode_rewards):
+        self.episode_rewards = episode_rewards
     def load(self, load_path):
         buffer = pkl.load(open(load_path, 'rb'))
         self.state = buffer.state

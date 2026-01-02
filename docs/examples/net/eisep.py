@@ -25,15 +25,20 @@ class EISepRNN(nn.Module):
       - output_seq: (seq_len, batch_size, hidden_size)
       - (h_n, c_n): each (num_layers, batch_size, hidden_size).
     """
-    def __init__(self, input_size: int, hidden_size: int, output_size: int):
+    def __init__(self, input_size: int, hidden_size: int, output_size: int, rec_filter: str='relu'):
         print('Using UnFixed EISep RNN')
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         # per-layer input → hidden
-        self.rec_filter   = nn.ReLU()
-        std = 1/ np.sqrt(hidden_size)
+        # self.rec_filter_fn   = nn.ReLU()
+        if rec_filter == 'relu':
+            self.rec_filter = nn.ReLU()
+        elif rec_filter == 'abs':
+            self.rec_filter = torch.abs
+        # self.rec_filter_fn = torch.abs
+        self.std = std = 1/ np.sqrt(hidden_size)
         # if isinstance(self.rec_filter, nn.ReLU):
         #     print('Using ReLU as recurrent filter')
         #     std /= np.sqrt(1/2-1/2/np.pi)
@@ -46,7 +51,7 @@ class EISepRNN(nn.Module):
         self.input_layer = nn.Linear(input_size, hidden_size)
 
 
-        self.Wrec_free = nn.Parameter(nn.ReLU()(torch.randn(hidden_size, hidden_size)*std))
+        self.Wrec_free = nn.Parameter(self.rec_filter(torch.randn(hidden_size, hidden_size)*std))
         # print('Wrec_free1:', self.Wrec_free.device)
         # self.Wrec_free = nn.ReLU()(self.Wrec_free)  # Ensure non-negative recurrent weights
         # print('Wrec_free after ReLU1:', self.Wrec_free.device)
@@ -80,7 +85,7 @@ class EISepRNN(nn.Module):
         for m in [self.input_layer, self.output_layer]:
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight)
-                nn.init.normal_(m.bias, mean=0, std=std)
+                nn.init.normal_(m.bias, mean=0, std=std)                
     def init_W(self):
 
         # self.denom = ((2 * np.pi - 1) / (2 * np.pi)) * self.hidden_size
@@ -161,6 +166,81 @@ class EISepRNN(nn.Module):
         return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
         # return outputs, (new_h, new_c)
 
+    def sc_forward(self, x, sparsity_mask, hx=None, temperature=None):
+        # print(f'sparsity controlled forward, density={sparsity_mask.float().mean()}')
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
+
+        # init or unpack hidden/cell: (L, B, H)
+        if hx is None:
+            h = x.new_zeros(B, self.hidden_size)
+            c = x.new_zeros(B, self.hidden_size)
+        else:
+            h, c = hx
+
+        outputs = torch.zeros(T, B, self.output_size, device=device)  # (T, B, H)
+        hs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
+        cs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
+        rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
+        # loop over time
+        for t in range(T):
+            layer_in = x[t]  # (B, D_in) or (B, H)
+            # no loop over layers
+            input_gate = self.input_layer(layer_in)  # (B, H)
+            ###
+            if self.training:
+                mask = F.gumbel_softmax(self.eimask_logit,
+                            tau=0.1, hard=False, dim=-1)
+                # mask = F.softmax(self.eimask_logit/temperature, dim=-1)
+                ei_code = mask[:, 0] - mask[:, 1]
+                # ei_code = self.eicode_origin
+            else:
+                ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
+                # ei_code = torch.where(self.eicode_origin > 0, 1., -1.)
+            # if temperature < 0:
+            #     ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
+            # else:
+            #     mask = (self.eimask_logit/temperature).softmax(dim=-1)  # (H, 2)
+            #     ei_code = mask[:, 0] - mask[:, 1]
+            Wrec   = self.rec_filter(self.Wrec_free)        # (H, H)
+            assert sparsity_mask.shape == Wrec.shape
+            actual = Wrec @ torch.diag(ei_code) * sparsity_mask     # (H, H)
+            # 3) rec input
+            rec_in = h @ actual.T + self.bias          # (B, H)
+            # 4) new hidden
+            new_h    = self.act(input_gate + rec_in)                   # (B, H)
+
+            # new_h.append(h_i)
+            # new_c.append(c[i])   # 如果以后要更新 c_i，在这里替换
+            # layer_in = h_i       # feed to next layer
+            new_c = c
+
+
+            # stack per-layer states
+            # h = torch.stack(new_h, dim=0)  # (L, B, H)
+            # c = torch.stack(new_c, dim=0)
+            hs[t] = new_h  # (B, H)
+            cs[t] = new_c  # (B, H)
+            rec_ins[t] = rec_in
+            h = new_h  # (B, H)
+            c = new_c  # (B, H)
+            # project top-layer hidden to output
+            # outputs.append(self.output_layer(new_h))  # (B, H)
+            outputs[t] = self.output_layer(new_h)
+
+        # (T, B, H)
+        # output_seq = torch.stack(outputs, dim=0)
+        # h_seq = torch.stack(hs, dim=0)  # (T, B, H)
+        # c_seq = torch.stack(cs, dim=0)  # (T, B, H)
+        output_seq = outputs
+        h_seq = hs
+        c_seq = cs
+
+
+        return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
+        # return outputs, (new_h, new_c)
+    
     def eval(self):
         self.training = False
     def train(self, mode=True):
@@ -287,15 +367,15 @@ class EI_Linear(nn.Module):
 
 
 class EISepNet(nn.Module):
-    def __init__(self, num_h, ob_size, act_size, entropy_loss=True):
+    def __init__(self, num_h, ob_size, act_size, entropy_loss=True, rec_filter='relu'):
         super(EISepNet, self).__init__()
         self.hidden_size = num_h
         self.input_size = ob_size
         self.output_size = act_size
         if entropy_loss == True:
-            self.lstm = EISepRNN(ob_size, num_h, act_size)
+            self.lstm = EISepRNN(ob_size, num_h, act_size, rec_filter)
         else:
-            self.lstm = FixedEISepRNN(ob_size, num_h, act_size)
+            self.lstm = FixedEISepRNN(ob_size, num_h, act_size, rec_filter)
         self.temperature = None
         self.entropy_loss = entropy_loss
         # self.linear = nn.Linear(num_h, act_size)
@@ -306,7 +386,9 @@ class EISepNet(nn.Module):
         # print('out:', out.shape, 'hidden:', hidden[0].shape, hidden[1].shape)
         # x = self.linear(out)
         return out, self.lstm.eimask_logit, hidden
-
+    def sc_forward(self, x, sparsity_mask):
+        out, hidden = self.lstm.sc_forward(x=x, sparsity_mask=sparsity_mask)
+        return out, self.lstm.eimask_logit, hidden
     def get_actual_weight(self):
         """Get the actual recurrent weight matrix."""
         weight = self.lstm.Wrec_free

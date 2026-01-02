@@ -70,6 +70,34 @@ class ColEI(nn.Module):
 
             h = new_h
         return outputs, None, (hs, cs, torch.zeros(T,))
+    def sc_forward(self, x, sparsity_mask, hx=None):
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
+
+        # init or unpack hidden/cell: (L, B, H)
+        if hx is None:
+            h = x.new_zeros(B, self.hidden_size)
+            c = x.new_zeros(B, self.hidden_size)
+        else:
+            h, c = hx
+
+        outputs = torch.zeros(T, B, self.output_size, device=device)  # (T, B, H)
+        hs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
+        cs = torch.zeros(T, B, self.hidden_size, device=device)
+        # rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
+        # loop over time
+        self.colcell.reset_hidden(B)
+        for t in range(T):
+            layer_in = x[t]
+            # input_gate = self.input_layer(layer_in)
+            new_h = self.colcell.sc_forward(x=layer_in, sparsity_mask=sparsity_mask)
+            hs[t] = new_h
+            outputs[t] = self.output_layer(new_h)
+
+            h = new_h
+        return outputs, None, (hs, cs, torch.zeros(T,))
+    
     def update(self, lr, max_grad_norm=10):
         # self.input_layer.update(lr=lr, max_grad_norm=max_grad_norm)
         self.colcell.update(lr=lr, max_grad_norm=max_grad_norm)
