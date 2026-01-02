@@ -10,7 +10,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 from dale_lib.dense_layers import DenseLayer, EiDense, ColumnEiDense
 from dale_lib.dann_rnn import EiRNNCell
-from dale_lib.update_policies import EiRNN_Adam_UpdatePolicy, ColumnEiAdam_Clip, EiRNN_cSGD_UpdatePolicy, DalesANN_cSGD_UpdatePolicy, ColumnEiSGD_Clip, ColumnEiDenseSGD
+from dale_lib.update_policies import EiRNN_Adam_UpdatePolicy, ColumnEiAdam_Clip, EiRNN_cSGD_UpdatePolicy, \
+        DalesANN_cSGD_UpdatePolicy, DalesANN_cAdam_UpdatePolicy, ColumnEiSGD_Clip, ColumnEiDenseSGD, ColumnEiDenseAdam
 from dale_lib.init_policies import EiDenseWeightInit_WexMean, U_TorchInit, W_TorchInit, ColumnEiCell_W_InitPolicy, ColumnEi_FirstCell_U_InitPolicy, EiRNNCell_U_InitPolicy, EiRNNCell_W_InitPolicy, W_UniformInit
 from net.dale_util import activation_derivative
 from dale_lib.song_rnn import ColumnEiCell
@@ -23,34 +24,42 @@ class DANNCell(nn.Module):
         self.input_size = ob_size
         self.output_size = act_size
         n_hidden = self.hidden_size
-        max_gn = 10
+        max_gn = None
         non_linearity = nn.Tanh()
         i2h_init_policy=EiRNNCell_U_InitPolicy()
         h2h_init_policy=EiRNNCell_W_InitPolicy(random=False)
-        self.input_layer = DenseLayer(ob_size, n_hidden, nonlinearity=None)
-        self.danncell = EiRNNCell(n_input=n_hidden, ne=n_hidden, ni_i2h=max(num_h//(9+1),1), ni_h2h=max(num_h//(9+1),1),
-                            nonlinearity=non_linearity,
-                            i2h_init_policy=i2h_init_policy,
-                            h2h_init_policy=h2h_init_policy)
+        # self.input_layer = DenseLayer(ob_size, n_hidden, nonlinearity=None)
+        # self.danncell = EiRNNCell(n_input=n_hidden, ne=n_hidden, ni_i2h=max(num_h//(9+1),1), ni_h2h=max(num_h//(9+1),1),
+        #                     nonlinearity=non_linearity,
+        #                     i2h_init_policy=i2h_init_policy,
+        #                     h2h_init_policy=h2h_init_policy)
+        self.danncell = EiRNNCell(n_input=ob_size, ne=n_hidden, ni_i2h=max(num_h//(9+1),1), ni_h2h=max(num_h//(9+1),1),
+                    nonlinearity=non_linearity,
+                    i2h_init_policy=i2h_init_policy,
+                    h2h_init_policy=h2h_init_policy)
+        self.output_layer = EiDense(n_hidden, act_size, max(act_size//(9+1),1), nonlinearity=None, weight_init_policy=EiDenseWeightInit_WexMean(numerator=2))
         if optimizer == 'sgd':
             self.danncell.update_policy = EiRNN_cSGD_UpdatePolicy(max_grad_norm=max_gn)
+            self.output_layer.update_policy = DalesANN_cSGD_UpdatePolicy(max_grad_norm=max_gn)
         elif optimizer == 'adam':
             self.danncell.update_policy = EiRNN_Adam_UpdatePolicy(max_grad_norm=max_gn)
-        self.output_layer = DenseLayer(n_hidden, act_size, nonlinearity=None)
+            self.output_layer.update_policy = DalesANN_cAdam_UpdatePolicy(max_grad_norm=max_gn)
+        # self.output_layer = DenseLayer(n_hidden, act_size, nonlinearity=None)
         self.entropy_loss = False
-
+        self.danncell.init_weights()
+        self.output_layer.init_weights()
     def forward(self, x, hx=None):
         # x: (B, D_in)
 
         # for t in range(T):
         layer_in = x
-        input_gate = self.input_layer(layer_in)
-        new_h = self.danncell(input_gate)
+        # input_gate = self.input_layer(layer_in)
+        new_h = self.danncell(layer_in)
         output = self.output_layer(new_h)
 
         return output, new_h
     def update(self, lr, max_grad_norm=10):
-        self.input_layer.update(lr=lr, max_grad_norm=max_grad_norm)
+        # self.input_layer.update(lr=lr, max_grad_norm=max_grad_norm)
         self.danncell.update(lr=lr, max_grad_norm=max_grad_norm)
         self.output_layer.update(lr=lr, max_grad_norm=max_grad_norm)
     def get_actual_weight(self):
@@ -58,7 +67,7 @@ class DANNCell(nn.Module):
 
     def reset_hidden(self, batch_size):
         self.danncell.reset_hidden(batch_size)
-        return self.danncell.h
+        return self.danncell.h.T
 
     # def state_dict(self):
     #     return {
@@ -74,11 +83,11 @@ class DANNCell(nn.Module):
     def reset_hidden_on_done(self, hidden, done_mask):
         assert done_mask.dim() == 2 and done_mask.shape[1] == 1
         self.danncell.h = self.danncell.h * (1 - done_mask.T)
-        return self.danncell.h
+        return self.danncell.h.T
 
     def detach_hidden(self, hidden):
         self.danncell.h = self.danncell.h.detach()
-        return  self.danncell.h
+        return  self.danncell.h.T
 
 
 class ColEICell(nn.Module):
@@ -92,32 +101,37 @@ class ColEICell(nn.Module):
         non_linearity = nn.Tanh()
         i2h_init_policy=ColumnEi_FirstCell_U_InitPolicy(dataset='PennTreebank')
         h2h_init_policy=ColumnEiCell_W_InitPolicy(radius=1.5)
-        self.input_layer = DenseLayer(ob_size, n_hidden, nonlinearity=None)
+        # self.input_layer = DenseLayer(ob_size, n_hidden, nonlinearity=None)
         if optimizer == 'sgd':
             update_policy = ColumnEiSGD_Clip(max=max_gn)
+            output_layer_update_policy = ColumnEiDenseSGD(max=max_gn)
         elif optimizer == 'adam':
             update_policy = ColumnEiAdam_Clip(max=max_gn)
-        self.colcell = ColumnEiCell(n_input=n_hidden, layer_params=(n_hidden, 9),
+            output_layer_update_policy = ColumnEiDenseAdam(max=max_gn)
+        self.colcell = ColumnEiCell(n_input=self.input_size, layer_params=(n_hidden, 9),
                             nonlinearity=non_linearity,
                             i2h_init_policy=i2h_init_policy,
                             h2h_init_policy=h2h_init_policy,
                             update_policy=update_policy)
-        self.output_layer = DenseLayer(n_hidden, act_size, nonlinearity=None)
+        # self.output_layer = DenseLayer(n_hidden, act_size, nonlinearity=None)
+        self.output_layer = ColumnEiDense(n_hidden, (self.output_size, 9), nonlinearity=None, update_policy=output_layer_update_policy)
         self.entropy_loss = False
+        self.colcell.init_weights()
+        self.output_layer.init_weights()
     def forward(self, x, hx=None):
 
         layer_in = x
-        input_gate = self.input_layer(layer_in)
-        new_h = self.colcell(input_gate)
+        # input_gate = self.input_layer(layer_in)
+        new_h = self.colcell(layer_in)
         output = self.output_layer(new_h)
 
         return output, new_h
 
     def reset_hidden(self, batch_size):
         self.colcell.reset_hidden(batch_size)
-        return self.colcell.h
+        return self.colcell.h.T
     def update(self, lr, max_grad_norm=10):
-        self.input_layer.update(lr=lr, max_grad_norm=max_grad_norm)
+        # self.input_layer.update(lr=lr, max_grad_norm=max_grad_norm)
         self.colcell.update(lr=lr, max_grad_norm=max_grad_norm)
         self.output_layer.update(lr=lr, max_grad_norm=max_grad_norm)
     def get_actual_weight(self):
@@ -184,11 +198,11 @@ class ColEICell(nn.Module):
     def reset_hidden_on_done(self, hidden, done_mask):
         assert done_mask.dim() == 2 and done_mask.shape[1] == 1
         self.colcell.h = self.colcell.h * (1 - done_mask.T)
-        return self.colcell.h
+        return self.colcell.h.T
 
     def detach_hidden(self, hidden):
         self.colcell.h = self.colcell.h.detach()
-        return self.colcell.h
+        return self.colcell.h.T
 
 
 class DBPNCell(nn.Module):
@@ -213,8 +227,8 @@ class DBPNCell(nn.Module):
         self.device = x.device
         nSamp, inDim = x.shape
         assert hidden.shape == (nSamp, self.hidden_size)
-        ops = torch.zeros(nSamp,self.hidden_size, requires_grad=False).to(self.device)
-        pred = torch.zeros(nSamp,self.n_classes, requires_grad=False).to(self.device)
+        # ops = torch.zeros(nSamp,self.hidden_size, requires_grad=False).to(self.device)
+        # pred = torch.zeros(nSamp,self.n_classes, requires_grad=False).to(self.device)
 
         ip = torch.unsqueeze(x, 1)
         h0 = torch.unsqueeze(hidden, 0)

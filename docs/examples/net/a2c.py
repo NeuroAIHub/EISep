@@ -45,78 +45,27 @@ class A2C_singleRNN(nn.Module):
         n_envs: int,
         hidden_size: int,
         configuration: str,
-        simple_type: str,
-        ei_type: str
     ) -> None:
         """Initializes the actor and critic networks and their respective optimizers."""
         super().__init__()
         self.device = device
         self.n_envs = n_envs
-        # critic_layers = [
-        #     nn.Linear(n_features, 32),
-        #     nn.ReLU(),
-        #     nn.Linear(32, 32),
-        #     nn.ReLU(),
-        #     nn.Linear(32, 1),  # estimate V(s)
-        # ]
-
-        # actor_layers = [
-        #     nn.Linear(n_features, 32),
-        #     nn.ReLU(),
-        #     nn.Linear(32, 32),
-        #     nn.ReLU(),
-        #     nn.Linear(
-        #         32, n_actions
-        #     ),  # estimate action logits (will be fed into a softmax later)
-        # ]
-
         # define actor and critic networks
         # self.critic = nn.Sequential(*critic_layers).to(self.device)
         # self.actor = nn.Sequential(*actor_layers).to(self.device)
-        assert (simple_type in ['rnn', 'gru', 'lstm']) \
-            and (ei_type in ['eisep', 'dbpn', 'fixed_eisep', 'entryei', 'fixed_entryei', \
-                             'dann_sgd', 'colei_sgd', 'dann_adam', 'colei_adam']), 'No valid configuration'
-        if simple_type == 'rnn':
-            simple_cell_fn = SimpleRNNCell
-            if ei_type == 'eisep':
-                ei_cell_fn = EIRNNCell
-            elif ei_type == 'fixed_eisep':
-                ei_cell_fn = Fixed_EIRNNCell
-            elif ei_type == 'dbpn':
-                ei_cell_fn = DBPNCell
-            elif ei_type == 'entryei':
-                ei_cell_fn = EntryEIRNNCell
-            elif ei_type == 'fixed_entryei':
-                ei_cell_fn = Fixed_EntryEIRNNCell
-            elif ei_type == 'dann_sgd':
-                ei_cell_fn = partial(DANNCell, optimizer='sgd')
-            elif ei_type == 'colei_sgd':
-                ei_cell_fn = partial(ColEICell, optimizer='sgd')
-            elif ei_type == 'dann_adam':
-                ei_cell_fn = partial(DANNCell, optimizer='adam')
-            elif ei_type == 'colei_adam':
-                ei_cell_fn = partial(ColEICell, optimizer='adam')
-
-        elif simple_type == 'gru':
-            simple_cell_fn = SimpleGRUCell
-            if ei_type == 'eisep':
-                ei_cell_fn = EIGRUCell
-            elif ei_type == 'dbpn':
-                ei_cell_fn = DBPNCell
-        elif simple_type == 'lstm':
-            simple_cell_fn = SimpleLSTMCell
-            if ei_type == 'eisep':
-                ei_cell_fn = EILSTMCell
-            elif ei_type == 'dbpn':
-                ei_cell_fn = DBPNCell
-
-        self.hidden_size = hidden_size
+        # self.critic_actor = nn.Sequential(
+        #     nn.Linear(n_features, hidden_size),
+        #     nn.Tanh(),
+        #     nn.Linear(hidden_size, hidden_size),
+        #     nn.Tanh(),
+        #     nn.Linear(hidden_size, n_actions+1)
+        # )
         if configuration == 'simple_single':
-            print(f"Using {str(simple_cell_fn)} RNN for actor and critic")
-            self.critic_actor = simple_cell_fn(n_features, hidden_size, n_actions+1).to(self.device)
+            print("Using simple RNN for actor and critic")
+            self.critic_actor = SimpleRNNCell(n_features, hidden_size, 1+n_actions, extra_mlp=True).to(self.device)
         elif configuration == 'ei_single':
-            print(f"Using {str(ei_cell_fn)} for critic and actor")
-            self.critic_actor = ei_cell_fn(n_features, hidden_size, n_actions+1).to(self.device)
+            print("Using EI RNN for critic and simple RNN for actor")
+            self.critic_actor = EIRNNCell(n_features, hidden_size, 1+n_actions, extra_mlp=True).to(self.device)
         else:
             raise ValueError("Unknown configuration")
 
@@ -143,6 +92,7 @@ class A2C_singleRNN(nn.Module):
         """
         x = torch.Tensor(x).to(self.device)
         value_logits, hidden = self.critic_actor(x, hidden)
+        # value_logits = self.critic_actor(x)
         state_values = value_logits[..., 0]
         action_logits_vec = value_logits[..., 1:]
         return state_values, action_logits_vec, hidden
@@ -163,7 +113,6 @@ class A2C_singleRNN(nn.Module):
             state_values: A tensor with the state values, with shape [n_steps_per_update, n_envs].
         """
         state_values, action_logits, new_hidden = self.forward(x, hidden)
-        # action_logits = torch.where(torch.isnan(action_logits), 0, action_logits)
         action_pd = torch.distributions.Categorical(
             logits=action_logits
         )  # implicitly uses softmax
@@ -207,23 +156,24 @@ class A2C_singleRNN(nn.Module):
         advantages = torch.zeros(T, self.n_envs, device=device)
 
         # compute the advantages using GAE
+        # print(value_preds.shape, value_preds)
         gae = 0.0
-        for t in reversed(range(T - 1)):
+        for t in reversed(range(T)):
             td_error = (
                 rewards[t] + gamma * masks[t] * value_preds[t + 1] - value_preds[t]
             )
             gae = td_error + gamma * lam * masks[t] * gae
             advantages[t] = gae
 
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         # calculate the loss of the minibatch for actor and critic
         # critic_loss = advantages.pow(2).mean()
         critic_loss = F.smooth_l1_loss(value_preds[:-1], (advantages + value_preds[:-1]).detach())
 
-
+        normalized_advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         # give a bonus for higher entropy to encourage exploration
         actor_loss = (
-            -(advantages.detach() * action_log_probs).mean() - ent_coef * entropy.mean()
+            -(normalized_advantages.detach() * action_log_probs).mean() - ent_coef * entropy.mean()
         )
         return (critic_loss, actor_loss)
 
@@ -238,34 +188,34 @@ class A2C_singleRNN(nn.Module):
             actor_loss: The actor loss.
         """
         self.critic_actor_optim.zero_grad()
-        loss = critic_loss*0.1 + actor_loss
+        loss = critic_loss + actor_loss
         if hasattr(self.critic_actor, 'get_ei_entropy_loss'):
             ei_entropy_loss = self.critic_actor.get_ei_entropy_loss()
             loss += ei_entropy_loss  # weight for EI entropy loss
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), 2)
-        if isinstance(self.critic_actor, DANNCell):
-            self.critic_actor.update(lr=self.critic_actor_optim.defaults['lr'], max_grad_norm=10)
-        elif isinstance(self.critic_actor, ColEICell):
-            self.critic_actor.update(lr=self.critic_actor_optim.defaults['lr'], max_grad_norm=10)
-        elif isinstance(self.critic_actor, DBPNCell):
-            self.critic_actor.update(self.critic_actor_optim)
-        else:
-            self.critic_actor_optim.step()
+
+        self.critic_actor_optim.step()
 
     def reset_hidden(self, batch_size):
+        hidden = None
         if isinstance(self.critic_actor, DANNCell) or isinstance(self.critic_actor, ColEICell):
-            return self.critic_actor.reset_hidden(batch_size)
+            hidden = self.critic_actor.reset_hidden(batch_size)
         else:
-            return torch.zeros((batch_size, self.hidden_size), device=self.device)
+            hidden = torch.zeros((batch_size, self.critic_actor.hidden_size), device=self.device)
+        return hidden
 
     def reset_hidden_on_done(self, hidden, done):
         """Resets the hidden state tensor for environments that are done."""
-        done_tensor = torch.BoolTensor(done, device=self.device).unsqueeze(1)
-        return self.critic_actor.reset_hidden_on_done(hidden, done_tensor)
+        done_tensor = torch.BoolTensor(done).unsqueeze(1).to(self.device)
+        # done_tensor = torch.as_tensor(done, dtype=torch.float32, device=self.device).unsqueeze(1)
+        hidden = self.critic_actor.reset_hidden_on_done(hidden, done_tensor)
+        return hidden
 
     def detach_hidden(self, hidden):
-        return self.critic_actor.detach_hidden(hidden)
+        hidden = self.critic_actor.detach_hidden(hidden)
+        return hidden
+
 
 
 
@@ -469,7 +419,7 @@ class A2C(nn.Module):
 
         # compute the advantages using GAE
         gae = 0.0
-        for t in reversed(range(T - 1)):
+        for t in reversed(range(T)):
             td_error = (
                 rewards[t] + gamma * masks[t] * value_preds[t + 1] - value_preds[t]
             )
@@ -477,11 +427,14 @@ class A2C(nn.Module):
             advantages[t] = gae
 
         # calculate the loss of the minibatch for actor and critic
-        critic_loss = advantages.pow(2).mean()
+        critic_loss = F.smooth_l1_loss(value_preds[:-1], (advantages + value_preds[:-1]).detach())
+
+        normalized_advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        # critic_loss = advantages.pow(2).mean()
 
         # give a bonus for higher entropy to encourage exploration
         actor_loss = (
-            -(advantages.detach() * action_log_probs).mean() - ent_coef * entropy.mean()
+            -(normalized_advantages.detach() * action_log_probs).mean() - ent_coef * entropy.mean()
         )
         return (critic_loss, actor_loss)
 
@@ -506,9 +459,11 @@ class A2C(nn.Module):
         for m, optim in zip([self.critic, self.actor], [self.critic_optim, self.actor_optim]):
 
             if isinstance(m, DANNCell):
-                m.update(lr=optim.defaults['lr'], max_grad_norm=10)
+                m.update(lr=optim.defaults['lr'], max_grad_norm=None)
+                m.zero_grad()
             elif isinstance(m, ColEICell):
                 m.update(lr=optim.defaults['lr'], max_grad_norm=10)
+                m.zero_grad()
             elif isinstance(m, DBPNCell):
                 m.update(optim)
             else:

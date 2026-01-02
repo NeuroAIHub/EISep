@@ -19,7 +19,7 @@ class SimpleRNNCell(nn.Module):
         hidden_size: The number of features in the hidden state.
     """
 
-    def __init__(self, input_size, hidden_size: int, output_size: int) -> None:
+    def __init__(self, input_size, hidden_size: int, output_size: int, extra_mlp: bool = False) -> None:
         """Initializes the weights and biases of the RNN cell."""
         super().__init__()
         self.input_size = input_size
@@ -35,13 +35,28 @@ class SimpleRNNCell(nn.Module):
         std = 1.0 / np.sqrt(hidden_size)
         self.Wrec_free = nn.Parameter(torch.randn((hidden_size, hidden_size)) * std)
         self.bias = nn.Parameter(torch.zeros((hidden_size,)))
-        self.output_layer = nn.Linear(hidden_size, output_size)
         self.act = nn.Tanh()
+        if extra_mlp:
+            print("Using extra mlp layer in SimpleRNNCell")
+            self.output_layer = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                self.act,
+                nn.Linear(hidden_size, output_size)
+            )
+        else:
+            self.output_layer = nn.Linear(hidden_size, output_size)
+
 
         # init input_layer orthogonally
         for m in [self.input_layer, self.output_layer]:
-            nn.init.orthogonal_(m.weight)
-            nn.init.normal_(m.bias, mean=0, std=std)
+            if isinstance(m, nn.Sequential):
+                for layer in m:
+                    if isinstance(layer, nn.Linear):
+                        nn.init.orthogonal_(layer.weight)
+                        nn.init.normal_(layer.bias, mean=0, std=std)
+            elif isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight)
+                nn.init.normal_(m.bias, mean=0, std=std)
 
     def forward(self, input: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
         """
@@ -65,7 +80,7 @@ class SimpleRNNCell(nn.Module):
 
     def reset_hidden_on_done(self, hidden, done_mask):
         assert done_mask.dim() == 2 and done_mask.shape[1] == 1
-        return torch.where(done_mask, torch.zeros_like(hidden).to(device=hidden.device), hidden)
+        return hidden * (1 - done_mask)
 
     def detach_hidden(self, hidden):
         return hidden.detach()
@@ -79,7 +94,7 @@ class EIRNNCell(nn.Module):
         hidden_size: The number of features in the hidden state.
     """
 
-    def __init__(self, input_size, hidden_size: int, output_size: int) -> None:
+    def __init__(self, input_size, hidden_size: int, output_size: int, extra_mlp: bool = False) -> None:
         """Initializes the weights and biases of the RNN cell."""
         super().__init__()
         self.input_size = input_size
@@ -92,15 +107,31 @@ class EIRNNCell(nn.Module):
         self.bias = nn.Parameter(torch.randn(hidden_size)*std)
         self.eimask_logit = nn.Parameter(torch.randn(hidden_size, 2)*std)
 
-        self.output_layer1 = nn.Linear(hidden_size, hidden_size)
-        self.output_layer = nn.Linear(hidden_size, output_size)
-        # self.output_layer = EI_Linear(hidden_size, output_size)
-        self.act          = nn.Tanh()
-        self.training = True
+        self.extra_mlp = extra_mlp
+        self.act = nn.Tanh()
+        if extra_mlp:
+            print("Using extra mlp layer in EIRNNCell")
+            self.output_layer = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                self.act,
+                nn.Linear(hidden_size, output_size)
+            )
+        else:
+            self.output_layer = nn.Linear(hidden_size, output_size)
+
+
+        # init input_layer orthogonally
         for m in [self.input_layer, self.output_layer]:
-            if isinstance(m, nn.Linear):
+            if isinstance(m, nn.Sequential):
+                for layer in m:
+                    if isinstance(layer, nn.Linear):
+                        nn.init.orthogonal_(layer.weight)
+                        nn.init.normal_(layer.bias, mean=0, std=std)
+            elif isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight)
                 nn.init.normal_(m.bias, mean=0, std=std)
+        # self.output_layer = EI_Linear(hidden_size, output_size)
+        self.training = True
 
     def forward(self, x, hidden):
         # x: (B, D_in)
@@ -119,10 +150,15 @@ class EIRNNCell(nn.Module):
         rec_in = hidden @ actual.T + self.bias          # (B, H)
         # 4) new hidden
         new_h    = self.act(input_gate + rec_in)                   # (B, H)
-        new_h1 = self.act(self.output_layer1(new_h))
-        output = self.output_layer(new_h1)
+        ###TODO: multiple mlp layers
+        # new_h1 = self.act(self.mlp_layer(new_h))
+        output = self.output_layer(new_h)
         return output, new_h
 
+    # def eval(self):
+    #     self.training = False
+    # def train(self, mode=True):
+    #     self.training = mode
 
     def get_ei_entropy_loss(self):
         eimask_prob = F.softmax(self.eimask_logit, dim=-1)
@@ -138,10 +174,11 @@ class EIRNNCell(nn.Module):
 
     def reset_hidden_on_done(self, hidden, done_mask):
         assert done_mask.dim() == 2 and done_mask.shape[1] == 1
-        return torch.where(done_mask, torch.zeros_like(hidden).to(hidden.device), hidden)
+        return hidden * (1 - done_mask)
 
     def detach_hidden(self, hidden):
         return hidden.detach()
+
 
 class Fixed_EIRNNCell(nn.Module):
     """
