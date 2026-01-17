@@ -94,16 +94,20 @@ class EIRNNCell(nn.Module):
         hidden_size: The number of features in the hidden state.
     """
 
-    def __init__(self, input_size, hidden_size: int, output_size: int, extra_mlp: bool = False) -> None:
+    def __init__(self, input_size, hidden_size: int, output_size: int, extra_mlp: bool = False, rec_filter: str = 'relu') -> None:
         """Initializes the weights and biases of the RNN cell."""
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
-        self.rec_filter   = nn.ReLU()
+        if rec_filter == 'relu':
+            self.rec_filter   = nn.ReLU()
+        elif rec_filter == 'abs':
+            print('Use abs for rec filter')
+            self.rec_filter   = torch.abs
         std = 1/ np.sqrt(hidden_size)
         self.input_layer = nn.Linear(input_size, hidden_size)
-        self.Wrec_free = nn.Parameter(nn.ReLU()(torch.randn(hidden_size, hidden_size)*std))
+        self.Wrec_free = nn.Parameter(self.rec_filter(torch.randn(hidden_size, hidden_size)*std))
         self.bias = nn.Parameter(torch.randn(hidden_size)*std)
         self.eimask_logit = nn.Parameter(torch.randn(hidden_size, 2)*std)
 

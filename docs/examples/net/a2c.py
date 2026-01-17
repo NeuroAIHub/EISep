@@ -275,11 +275,13 @@ class A2C(nn.Module):
         # self.actor = nn.Sequential(*actor_layers).to(self.device)
         assert (simple_type in ['rnn', 'gru', 'lstm']) \
             and (ei_type in ['eisep', 'dbpn', 'fixed_eisep', 'entryei', 'fixed_entryei', \
-                             'dann_sgd', 'colei_sgd', 'dann_adam', 'colei_adam']), 'No valid configuration'
+                             'dann_sgd', 'colei_sgd', 'dann_adam', 'colei_adam', 'absolute_eisep']), 'No valid configuration'
         if simple_type == 'rnn':
             simple_cell_fn = SimpleRNNCell
             if ei_type == 'eisep':
                 ei_cell_fn = EIRNNCell
+            elif ei_type == 'absolute_eisep':
+                ei_cell_fn = partial(EIRNNCell, rec_filter='abs')
             elif ei_type == 'fixed_eisep':
                 ei_cell_fn = Fixed_EIRNNCell
             elif ei_type == 'dbpn':
@@ -710,7 +712,7 @@ class ContinuousA2C(nn.Module):
 
         # compute the advantages using GAE
         gae = 0.0
-        for t in reversed(range(T - 1)):
+        for t in reversed(range(T)):
             td_error = (
                 rewards[t] + gamma * masks[t] * value_preds[t + 1] - value_preds[t]
             )
@@ -718,11 +720,14 @@ class ContinuousA2C(nn.Module):
             advantages[t] = gae
 
         # calculate the loss of the minibatch for actor and critic
-        critic_loss = advantages.pow(2).mean()
+        # critic_loss = advantages.pow(2).mean()
+        critic_loss = F.smooth_l1_loss(value_preds[:-1], (advantages + value_preds[:-1]).detach())
+
+        normalized_advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # give a bonus for higher entropy to encourage exploration
         actor_loss = (
-            -(advantages.detach() * action_log_probs).mean() - ent_coef * entropy.mean()
+            -(normalized_advantages.detach() * action_log_probs).mean() - ent_coef * entropy.mean()
         )
         return (critic_loss, actor_loss)
 
