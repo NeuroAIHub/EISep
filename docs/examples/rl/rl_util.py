@@ -156,6 +156,7 @@ def tag_lunar_lander_phases_batch_2(
     L = buffer_state.shape[0]
     phases = np.zeros(L, dtype=np.int64)
 
+    categorized_mask = np.zeros(L, dtype=bool)
     # Convenience masks
     high_alt   = y > 1.0
     mid_alt    = (y > 0.4) & (y <= 1.0)
@@ -231,8 +232,10 @@ def tag_lunar_lander_phases_batch_2(
     # Phase 0: Free fall (default), but we can explicitly tag:
     free_fall_mask = high_alt & fast_down & (~main_engine)
     phases[free_fall_mask] = 0  # they're already 0, but this documents intent
+    categorized_mask |= (braking_mask | horiz_mask | prep_mask | landed_mask | crash_mask | free_fall_mask)
+    uncategorized_frac = 1.0 - categorized_mask.mean()
 
-    return phases
+    return phases, uncategorized_frac
 
 
 def event_selectivity(buffer_hidden: np.ndarray,
@@ -349,7 +352,7 @@ def mutual_information(label_1, label_2, eps=1e-12, normalized=True):
     nmi = mi / (np.sqrt(Hp * Hs) + eps)
     return mi, nmi
 
-def savefig(figpath):
+def savefig(figpath, dpi=400):
     os.makedirs(os.path.dirname(figpath), exist_ok=True)
-    plt.savefig(figpath, dpi=400)
+    plt.savefig(figpath, dpi=dpi)
     print(figpath)
