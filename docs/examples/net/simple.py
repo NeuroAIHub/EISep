@@ -390,7 +390,7 @@ class SimpleNet(nn.Module):
     def sc_forward(self, x, sparsity_mask):
         out, hidden = self.lstm.sc_forward(x=x, sparsity_mask=sparsity_mask)
         return out, None, hidden
-
+        
     def init_hidden(self, batch_size, device):
         h0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
         c0 = torch.zeros(1, batch_size, self.hidden_size).to(device)

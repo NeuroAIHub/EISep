@@ -26,7 +26,7 @@ class EISepRNN(nn.Module):
       - (h_n, c_n): each (num_layers, batch_size, hidden_size).
     """
     def __init__(self, input_size: int, hidden_size: int, output_size: int, rec_filter: str='relu',
-                 ei_linear_block = None):
+                 ei_linear_block = None, init_choice = None):
         print('Using UnFixed EISep RNN')
         super().__init__()
         self.input_size = input_size
@@ -74,12 +74,14 @@ class EISepRNN(nn.Module):
 
         # map top-layer hidden → output
         self.output_layer = nn.Linear(hidden_size, output_size)
-        # self.output_layer = EI_Linear(hidden_size, output_size)
+
         if ei_linear_block is not None:
             if 'output' in ei_linear_block:
                 self.output_layer = EI_Linear(hidden_size, output_size)
             if 'input' in ei_linear_block:
                 self.input_layer = EI_Linear(input_size, hidden_size)
+
+        # self.output_layer = EI_Linear(hidden_size, output_size)
         self.act          = nn.Softplus()
 
 
@@ -92,12 +94,69 @@ class EISepRNN(nn.Module):
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight)
                 nn.init.normal_(m.bias, mean=0, std=std)
-    def init_W(self):
+        if init_choice == 'ColEI':
+            print('Using ColEI initialization')
+            self.init_weights_ColEI()
+        elif init_choice == 'DBPN':
+            print('Using DBPN initialization')
+            self.init_weights_DBPN()
 
-        # self.denom = ((2 * np.pi - 1) / (2 * np.pi)) * self.hidden_size
-        # sigma_we = np.sqrt(1 / self.denom)
-        # self.Wrec_free = nn.Parameter(torch.FloatTensor(np.random.exponential(scale=sigma_we, size=(self.hidden_size, self.hidden_size))))
-        self.Wrec_free = nn.Parameter(torch.FloatTensor(np.random.exponential(scale=1/np.sqrt(self.hidden_size), size=(self.hidden_size, self.hidden_size))))
+    def init_weights_ColEI(self):
+        """
+        todo
+        """
+        self.zero_diag = True
+        self.ablate_ii = False
+        self.spectral_radius = 1.5
+        ei_ratio = 9
+        ne = self.hidden_size * ei_ratio // (1 + ei_ratio)
+        ni = self.hidden_size - ne
+
+        self.denom = ((2 * np.pi - 1) / (2 * np.pi)) * (ne + (ne ** 2 / ni))
+
+        sigma_we = np.sqrt(1 / self.denom)
+        sigma_wi = (ne / ni) * sigma_we
+
+        We_np = np.random.exponential(scale=sigma_we, size=(self.hidden_size, ne))
+        Wi_np = -np.random.exponential(scale=sigma_wi, size=(self.hidden_size, ni))
+
+        W = np.concatenate([We_np, Wi_np], axis=1)
+        if self.zero_diag: np.fill_diagonal(W, 0)
+        if self.ablate_ii: W[-ni:,-ni:] = 0
+        if self.spectral_radius is not None: 
+            w, v = np.linalg.eig(W)
+            # rho = np.max(np.real(w))
+            rho = np.max( np.sqrt(np.power(np.real(w), 2) + np.power(np.imag(w), 2)) )
+            W *= (self.spectral_radius / rho)
+
+        # layer.W_pos.data = torch.from_numpy(np.absolute(W)).float()
+        self.Wrec_free = nn.Parameter(torch.from_numpy(np.absolute(W)).float())
+        eimask_logit = torch.zeros(self.hidden_size, 2)
+        eimask_logit[:ne, 0] = 1.0  # excitatory
+        eimask_logit[ne:, 1] = 1.0  # inhibitory
+        self.eimask_logit = nn.Parameter(eimask_logit)
+        # bias
+        nn.init.zeros_(self.bias)
+    
+    def init_weights_DBPN(self):
+        print('Using DBPN initialization')
+        ei_ratio = 4
+        self.frac_ex = ei_ratio / (1 + ei_ratio)
+        weights = np.zeros((self.hidden_size, self.hidden_size))
+        index_ranges = [(0,int(self.hidden_size*self.frac_ex)),(int(self.hidden_size*self.frac_ex),self.hidden_size)]
+        signs = [1, -1]  # excitatory, inhibitory
+        # for ii, (start, end) in enumerate(index_ranges):
+        #     limit = 1 / np.sqrt(self.hidden_size) if signs[ii] == 1 else -1/np.sqrt(self.hidden_size)
+        #     weights[:, start:end] = np.random.uniform(0, limit, size=(self.hidden_size, end-start))
+        weights = np.random.uniform(0, 1/np.sqrt(self.hidden_size), size=(self.hidden_size, self.hidden_size))
+        self.Wrec_free = nn.Parameter(torch.from_numpy(weights).float())
+        eimask_logit = torch.zeros(self.hidden_size, 2)
+        eimask_logit[:int(self.hidden_size*self.frac_ex), 0] = 1.0  # excitatory
+        eimask_logit[int(self.hidden_size*self.frac_ex):, 1] = 1.0  # inhibitory
+        self.eimask_logit = nn.Parameter(eimask_logit)
+        stdv = 1/np.sqrt(self.hidden_size)
+        b = torch.empty(self.hidden_size).uniform_(-stdv, stdv) + torch.empty(self.hidden_size).uniform_(-stdv, stdv)
+        self.bias = nn.Parameter(b)
 
     def forward(self, temperature, x, hx=None):
         # x: (T, B, D_in)
@@ -246,7 +305,7 @@ class EISepRNN(nn.Module):
 
         return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
         # return outputs, (new_h, new_c)
-
+    
     def eval(self):
         self.training = False
     def train(self, mode=True):
@@ -373,15 +432,16 @@ class EI_Linear(nn.Module):
 
 
 class EISepNet(nn.Module):
-    def __init__(self, num_h, ob_size, act_size, entropy_loss=True, rec_filter='relu', ei_linear_block=None):
+    def __init__(self, num_h, ob_size, act_size, entropy_loss=True, rec_filter='relu', ei_linear_block=None,
+                 init_choice=None):
         super(EISepNet, self).__init__()
         self.hidden_size = num_h
         self.input_size = ob_size
         self.output_size = act_size
         if entropy_loss == True:
-            self.lstm = EISepRNN(ob_size, num_h, act_size, rec_filter, ei_linear_block=ei_linear_block)
+            self.lstm = EISepRNN(ob_size, num_h, act_size, rec_filter, ei_linear_block=ei_linear_block, init_choice=init_choice)
         else:
-            self.lstm = FixedEISepRNN(ob_size, num_h, act_size, rec_filter)
+            self.lstm = FixedEISepRNN(ob_size, num_h, act_size)
         self.temperature = None
         self.entropy_loss = entropy_loss
         # self.linear = nn.Linear(num_h, act_size)

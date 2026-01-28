@@ -206,9 +206,9 @@ class EntryEIRNN(nn.Module):
         else:
             h, c = hx
 
-        outputs = []
-        hs = []
-        cs = []
+        outputs = torch.zeros(T, B, self.output_size, device=device)  # (T, B, H)
+        hs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
+        cs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
         rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
         # loop over time
         for t in range(T):
@@ -238,18 +238,21 @@ class EntryEIRNN(nn.Module):
             # stack per-layer states
             # h = torch.stack(new_h, dim=0)  # (L, B, H)
             # c = torch.stack(new_c, dim=0)
-            hs.append(new_h)  # (B, H)
-            cs.append(new_c)  # (B, H)
+            hs[t] = new_h  # (B, H)
+            cs[t] = new_c  # (B, H)
             rec_ins[t] = rec_in
             h = new_h  # (B, H)
             c = new_c  # (B, H)
             # project top-layer hidden to output
-            outputs.append(self.output_layer(new_h))  # (B, H)
+            outputs[t] = self.output_layer(new_h)
 
         # (T, B, H)
-        output_seq = torch.stack(outputs, dim=0)
-        h_seq = torch.stack(hs, dim=0)  # (T, B, H)
-        c_seq = torch.stack(cs, dim=0)  # (T, B, H)
+        # output_seq = torch.stack(outputs, dim=0)
+        # h_seq = torch.stack(hs, dim=0)  # (T, B, H)
+        # c_seq = torch.stack(cs, dim=0)  # (T, B, H)
+        output_seq = outputs
+        h_seq = hs
+        c_seq = cs
         return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
     def get_ei_entropy_loss(self):
         """Get the EI entropy loss."""
@@ -266,7 +269,7 @@ class EntryEIRNN(nn.Module):
 
 class EntryEINet(nn.Module):
     """A simple RNN with a single hidden layer."""
-    def __init__(self, num_h: int, ob_size: int, act_size: int, entropy_loss: bool = False):
+    def __init__(self, num_h: int, ob_size: int, act_size: int, entropy_loss: bool = True):
         super(EntryEINet, self).__init__()
         print('Using EntryEINet')
         self.hidden_size = num_h

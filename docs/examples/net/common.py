@@ -47,13 +47,16 @@ def init_model(ob_size, hidden_size, act_size, model_name):
             else:
                 raise ValueError(f"Unknown model_name {model_name}")
             net = EISepNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size, entropy_loss=entropy_loss, ei_linear_block=ei_linear_block)
+        elif '_init_' in model_name: ### Added to handle eisep with different initialization schemes
+            init_choice = model_name.split('_')[-1]  # get the initialization choice
+            net = EISepNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size, entropy_loss=entropy_loss, init_choice=init_choice)
         else:
             net = EISepNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size, entropy_loss=entropy_loss)
 
     elif 'simple' in model_name:
         if 'ccstr' in model_name:
             net = Ccstr_SimpleNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size)
-        elif 'ei' in model_name:
+        elif '_ei_' in model_name:
             if model_name == 'simple_ei_input':
                 ei_linear_block = ['input']
             elif model_name == 'simple_ei_output':
@@ -69,7 +72,7 @@ def init_model(ob_size, hidden_size, act_size, model_name):
         raise ValueError(f"Unknown model_name {model_name}")
     return net
 
-def savefig(figpath):
+def savefig(figpath, dpi=400):
     os.makedirs(os.path.dirname(figpath), exist_ok=True)
-    plt.savefig(figpath, dpi=400)
+    plt.savefig(figpath, dpi=dpi)
     print(figpath)
