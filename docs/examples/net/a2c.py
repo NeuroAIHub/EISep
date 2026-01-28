@@ -13,7 +13,8 @@ from torch import optim
 from net.rnncell_variant import SimpleRNNCell, EIRNNCell, SimpleGRUCell, Noshare_EIGRUCell, \
     EIGRUCell, SimpleLSTMCell, EILSTMCell, \
     Fixed_EIRNNCell, EntryEIRNNCell, Fixed_EntryEIRNNCell, \
-    Fixed_EILSTMCell, EntryEILSTMCell, Fixed_EntryEILSTMCell
+    Fixed_EILSTMCell, EntryEILSTMCell, Fixed_EntryEILSTMCell, Noshare_EILSTMCell
+from net.ffn import FFNCell
 from net.rnncell_variant_2 import DANNCell, ColEICell, DBPNCell
 from torch import distributions as pyd
 from torch.distributions import Normal
@@ -273,13 +274,18 @@ class A2C(nn.Module):
         # define actor and critic networks
         # self.critic = nn.Sequential(*critic_layers).to(self.device)
         # self.actor = nn.Sequential(*actor_layers).to(self.device)
-        assert (simple_type in ['rnn', 'gru', 'lstm']) \
+        assert (simple_type in ['rnn', 'gru', 'lstm', 'linear']) \
             and (ei_type in ['eisep', 'dbpn', 'fixed_eisep', 'entryei', 'fixed_entryei', \
-                             'dann_sgd', 'colei_sgd', 'dann_adam', 'colei_adam', 'absolute_eisep']), 'No valid configuration'
+                             'dann_sgd', 'colei_sgd', 'dann_adam', 'colei_adam', 'absolute_eisep',\
+                                'eisep_init_ColEI', 'eisep_init_DBPN']), 'No valid configuration'
         if simple_type == 'rnn':
             simple_cell_fn = SimpleRNNCell
             if ei_type == 'eisep':
                 ei_cell_fn = EIRNNCell
+            elif ei_type == 'eisep_init_ColEI':
+                ei_cell_fn = partial(EIRNNCell, init_choice='ColEI')
+            elif ei_type == 'eisep_init_DBPN':
+                ei_cell_fn = partial(EIRNNCell, init_choice='DBPN')
             elif ei_type == 'absolute_eisep':
                 ei_cell_fn = partial(EIRNNCell, rec_filter='abs')
             elif ei_type == 'fixed_eisep':
@@ -311,7 +317,10 @@ class A2C(nn.Module):
                 ei_cell_fn = EILSTMCell
             elif ei_type == 'dbpn':
                 ei_cell_fn = DBPNCell
-
+        elif simple_type == 'linear':
+            simple_cell_fn = partial(FFNCell, ei_linear=False)
+            if ei_type == 'eisep':
+                ei_cell_fn = partial(FFNCell, ei_linear=True)
         if configuration == 'simple':
             print(f"Using {str(simple_cell_fn)} RNN for actor and critic")
             self.critic = simple_cell_fn(n_features, hidden_size, 1).to(self.device)
@@ -537,7 +546,7 @@ class ContinuousA2C(nn.Module):
         self.log_std_bounds = (-5, 2)  # bounds for log std of action distribution
         assert (simple_type in ['rnn', 'gru', 'lstm']) \
             and (ei_type in ['eisep', 'dbpn', 'fixed_eisep', 'entryei', 'fixed_entryei', \
-                             'dann_sgd', 'colei_sgd', 'dann_adam', 'colei_adam']), 'No valid configuration'
+                             'dann_sgd', 'colei_sgd', 'dann_adam', 'colei_adam', 'noshare_eisep']), 'No valid configuration'
         if simple_type == 'rnn':
             simple_cell_fn = SimpleRNNCell
             if ei_type == 'eisep':
@@ -569,6 +578,8 @@ class ContinuousA2C(nn.Module):
             simple_cell_fn = SimpleLSTMCell
             if ei_type == 'eisep':
                 ei_cell_fn = EILSTMCell
+            elif ei_type == 'noshare_eisep':
+                ei_cell_fn = Noshare_EILSTMCell
             elif ei_type == 'fixed_eisep':
                 ei_cell_fn = Fixed_EILSTMCell
             elif ei_type == 'entryei':

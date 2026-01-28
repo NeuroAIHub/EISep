@@ -360,3 +360,11 @@ def signed_spectral_W(W, k_min=2, k_max=10, restarts=5, seed=0):
         agg="bestQ", q_threshold=0.99, require_keff=True
     )
     return df_dir, picks_dir
+
+def lift_spectral_W(W, k_min=2, k_max=10, restarts=5, seed=0):
+    df_lift, picks_lift = scan_k_signed_spectral(
+        W,  method="lift", k_min=k_min, k_max=k_max,
+        keep_diag=False, restarts=restarts, seed=seed,
+        agg="bestQ", q_threshold=0.99, require_keff=True
+    )
+    return df_lift, picks_lift

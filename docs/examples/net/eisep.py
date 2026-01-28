@@ -25,7 +25,8 @@ class EISepRNN(nn.Module):
       - output_seq: (seq_len, batch_size, hidden_size)
       - (h_n, c_n): each (num_layers, batch_size, hidden_size).
     """
-    def __init__(self, input_size: int, hidden_size: int, output_size: int, rec_filter: str='relu'):
+    def __init__(self, input_size: int, hidden_size: int, output_size: int, rec_filter: str='relu',
+                 ei_linear_block = None):
         print('Using UnFixed EISep RNN')
         super().__init__()
         self.input_size = input_size
@@ -74,6 +75,11 @@ class EISepRNN(nn.Module):
         # map top-layer hidden → output
         self.output_layer = nn.Linear(hidden_size, output_size)
         # self.output_layer = EI_Linear(hidden_size, output_size)
+        if ei_linear_block is not None:
+            if 'output' in ei_linear_block:
+                self.output_layer = EI_Linear(hidden_size, output_size)
+            if 'input' in ei_linear_block:
+                self.input_layer = EI_Linear(input_size, hidden_size)
         self.act          = nn.Softplus()
 
 
@@ -85,7 +91,7 @@ class EISepRNN(nn.Module):
         for m in [self.input_layer, self.output_layer]:
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight)
-                nn.init.normal_(m.bias, mean=0, std=std)                
+                nn.init.normal_(m.bias, mean=0, std=std)
     def init_W(self):
 
         # self.denom = ((2 * np.pi - 1) / (2 * np.pi)) * self.hidden_size
@@ -240,7 +246,7 @@ class EISepRNN(nn.Module):
 
         return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
         # return outputs, (new_h, new_c)
-    
+
     def eval(self):
         self.training = False
     def train(self, mode=True):
@@ -367,13 +373,13 @@ class EI_Linear(nn.Module):
 
 
 class EISepNet(nn.Module):
-    def __init__(self, num_h, ob_size, act_size, entropy_loss=True, rec_filter='relu'):
+    def __init__(self, num_h, ob_size, act_size, entropy_loss=True, rec_filter='relu', ei_linear_block=None):
         super(EISepNet, self).__init__()
         self.hidden_size = num_h
         self.input_size = ob_size
         self.output_size = act_size
         if entropy_loss == True:
-            self.lstm = EISepRNN(ob_size, num_h, act_size, rec_filter)
+            self.lstm = EISepRNN(ob_size, num_h, act_size, rec_filter, ei_linear_block=ei_linear_block)
         else:
             self.lstm = FixedEISepRNN(ob_size, num_h, act_size, rec_filter)
         self.temperature = None

@@ -8,11 +8,11 @@ from matplotlib import pyplot as plt
 from torch import nn
 from torch.nn import functional as F
 from net.dale_util import activation_derivative
-
+from net.eisep import EI_Linear
 
 class simpleRNN(nn.Module):
     """A simple RNN with a single hidden layer."""
-    def __init__(self, input_size: int, hidden_size: int, output_size: int):
+    def __init__(self, input_size: int, hidden_size: int, output_size: int, ei_linear_block = None):
         super(simpleRNN, self).__init__()
         print('Using simpleRNN')
         self.input_size = input_size
@@ -35,6 +35,11 @@ class simpleRNN(nn.Module):
         self.bias = nn.Parameter(torch.randn(hidden_size) * std)
         self.act = nn.Softplus()
         self.output_layer = nn.Linear(hidden_size, output_size)
+        if ei_linear_block is not None:
+            if 'output' in ei_linear_block:
+                self.output_layer = EI_Linear(hidden_size, output_size)
+            if 'input' in ei_linear_block:
+                self.input_layer = EI_Linear(input_size, hidden_size)
         # self.output_layer = EI_Linear(hidden_size, output_size)
         # nn.init.orthogonal_(self.Wrec_free)  # Initialize recurrent weights orthogonally
         for m in [self.input_layer, self.output_layer]:
@@ -369,13 +374,13 @@ class Ccstr_simpleRNN(nn.Module):
 
 class SimpleNet(nn.Module):
     """A simple RNN with a single hidden layer."""
-    def __init__(self, num_h: int, ob_size: int, act_size: int):
+    def __init__(self, num_h: int, ob_size: int, act_size: int, ei_linear_block = None):
         super(SimpleNet, self).__init__()
         self.hidden_size = num_h
         self.input_size = ob_size
         self.output_size = act_size
         self.entropy_loss = False
-        self.lstm = simpleRNN(ob_size, num_h, act_size)
+        self.lstm = simpleRNN(ob_size, num_h, act_size, ei_linear_block)
 
     def forward(self, x):
         # x: (T, B, D_in)
@@ -385,7 +390,7 @@ class SimpleNet(nn.Module):
     def sc_forward(self, x, sparsity_mask):
         out, hidden = self.lstm.sc_forward(x=x, sparsity_mask=sparsity_mask)
         return out, None, hidden
-        
+
     def init_hidden(self, batch_size, device):
         h0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
         c0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
