@@ -123,7 +123,7 @@ class EISepRNN(nn.Module):
         W = np.concatenate([We_np, Wi_np], axis=1)
         if self.zero_diag: np.fill_diagonal(W, 0)
         if self.ablate_ii: W[-ni:,-ni:] = 0
-        if self.spectral_radius is not None: 
+        if self.spectral_radius is not None:
             w, v = np.linalg.eig(W)
             # rho = np.max(np.real(w))
             rho = np.max( np.sqrt(np.power(np.real(w), 2) + np.power(np.imag(w), 2)) )
@@ -137,7 +137,7 @@ class EISepRNN(nn.Module):
         self.eimask_logit = nn.Parameter(eimask_logit)
         # bias
         nn.init.zeros_(self.bias)
-    
+
     def init_weights_DBPN(self):
         print('Using DBPN initialization')
         ei_ratio = 4
@@ -200,36 +200,53 @@ class EISepRNN(nn.Module):
             rec_in = h @ actual.T + self.bias          # (B, H)
             # 4) new hidden
             new_h    = self.act(input_gate + rec_in)                   # (B, H)
-
-            # new_h.append(h_i)
-            # new_c.append(c[i])   # 如果以后要更新 c_i，在这里替换
-            # layer_in = h_i       # feed to next layer
             new_c = c
 
-
-            # stack per-layer states
-            # h = torch.stack(new_h, dim=0)  # (L, B, H)
-            # c = torch.stack(new_c, dim=0)
             hs[t] = new_h  # (B, H)
             cs[t] = new_c  # (B, H)
             rec_ins[t] = rec_in
             h = new_h  # (B, H)
             c = new_c  # (B, H)
-            # project top-layer hidden to output
-            # outputs.append(self.output_layer(new_h))  # (B, H)
             outputs[t] = self.output_layer(new_h)
-
-        # (T, B, H)
-        # output_seq = torch.stack(outputs, dim=0)
-        # h_seq = torch.stack(hs, dim=0)  # (T, B, H)
-        # c_seq = torch.stack(cs, dim=0)  # (T, B, H)
         output_seq = outputs
         h_seq = hs
         c_seq = cs
 
 
         return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
-        # return outputs, (new_h, new_c)
+
+    def forward_using_weight(self, x, actual):
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
+
+        outputs = torch.zeros(T, B, self.output_size, device=device)  # (T, B, H)
+        hs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
+        cs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
+        rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
+        # loop over time
+        h = x.new_zeros(B, self.hidden_size)
+        c = x.new_zeros(B, self.hidden_size)
+        for t in range(T):
+            layer_in = x[t]  # (B, D_in) or (B, H)
+            # no loop over layers
+            input_gate = self.input_layer(layer_in)  # (B, H)
+            rec_in = h @ actual.T + self.bias          # (B, H)
+            # 4) new hidden
+            new_h    = self.act(input_gate + rec_in)                   # (B, H)
+
+            new_c = c
+
+            hs[t] = new_h  # (B, H)
+            cs[t] = new_c  # (B, H)
+            rec_ins[t] = rec_in
+            h = new_h  # (B, H)
+            c = new_c  # (B, H)
+            outputs[t] = self.output_layer(new_h)
+        output_seq = outputs
+        h_seq = hs
+        c_seq = cs
+        return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
 
     def sc_forward(self, x, sparsity_mask, hx=None, temperature=None):
         # print(f'sparsity controlled forward, density={sparsity_mask.float().mean()}')
@@ -305,7 +322,7 @@ class EISepRNN(nn.Module):
 
         return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
         # return outputs, (new_h, new_c)
-    
+
     def eval(self):
         self.training = False
     def train(self, mode=True):
@@ -447,11 +464,11 @@ class EISepNet(nn.Module):
         # self.linear = nn.Linear(num_h, act_size)
 
     def forward(self, x):
-        # print('x:', x.shape)
         out, hidden = self.lstm(self.temperature, x)
-        # print('out:', out.shape, 'hidden:', hidden[0].shape, hidden[1].shape)
-        # x = self.linear(out)
         return out, self.lstm.eimask_logit, hidden
+    def forward_using_weight(self, x, weight):
+        out, hidden = self.lstm.forward_using_weight(x, weight)
+        return out, hidden
     def sc_forward(self, x, sparsity_mask):
         out, hidden = self.lstm.sc_forward(x=x, sparsity_mask=sparsity_mask)
         return out, self.lstm.eimask_logit, hidden
