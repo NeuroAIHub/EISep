@@ -70,7 +70,7 @@ class simpleRNN(nn.Module):
             input_gate = self.input_layer(layer_in)  # (B, H)
 
             # 3) rec input
-            rec_in = h @ self.Wrec_free + self.bias          # (B, H)
+            rec_in = h @ self.Wrec_free.T + self.bias          # (B, H)
             # 4) new hidden
             new_h    = self.act(input_gate + rec_in)                   # (B, H)
 

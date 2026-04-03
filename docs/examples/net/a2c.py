@@ -343,6 +343,7 @@ class A2C(nn.Module):
         # define optimizers for actor and critic
         self.critic_optim = optim.Adam(self.critic.parameters(), lr=critic_lr)
         self.actor_optim = optim.Adam(self.actor.parameters(), lr=actor_lr)
+        self.ei_entropy_loss_coef = 1.0
 
     def to(self, device: torch.device) -> A2C:
         """Moves the model to the specified device."""
@@ -464,7 +465,7 @@ class A2C(nn.Module):
         loss = critic_loss + actor_loss
         for m in [self.critic, self.actor]:
             if hasattr(m, 'get_ei_entropy_loss'):
-                ei_entropy_loss = m.get_ei_entropy_loss()
+                ei_entropy_loss = m.get_ei_entropy_loss() * self.ei_entropy_loss_coef
                 loss += ei_entropy_loss  # weight for EI entropy loss
         loss.backward()
         for m, optim in zip([self.critic, self.actor], [self.critic_optim, self.actor_optim]):
@@ -508,6 +509,12 @@ class A2C(nn.Module):
         h_critic = self.critic.detach_hidden(h_critic)
         h_actor = self.actor.detach_hidden(h_actor)
         return (h_critic, h_actor)
+
+    def set_temperature(self, temperature, module):
+        if module in ['critic', 'both']:
+            self.critic.set_temperature(temperature)
+        if module in ['actor', 'both']:
+            self.actor.set_temperature(temperature)
 
 
 

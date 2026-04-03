@@ -143,6 +143,7 @@ class EIRNNCell(nn.Module):
             print('Using DBPN to initialize')
             self.init_weights_DBPN()
         self.training = True
+        self.temperature = 0.1
 
     def init_weights_ColEI(self):
         """
@@ -205,9 +206,9 @@ class EIRNNCell(nn.Module):
         B, _ = x.shape
         device  = x.device
         input_gate = self.input_layer(x)  # (B, H)
-        if self.training:
+        if self.training and self.temperature > 0:
             mask = F.gumbel_softmax(self.eimask_logit,
-                        tau=0.1, hard=False, dim=-1)
+                        tau=self.temperature, hard=False, dim=-1)
             ei_code = mask[:, 0] - mask[:, 1]
         else:
             ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
@@ -245,6 +246,9 @@ class EIRNNCell(nn.Module):
 
     def detach_hidden(self, hidden):
         return hidden.detach()
+
+    def set_temperature(self, temperature):
+        self.temperature = temperature
 
 
 class Fixed_EIRNNCell(nn.Module):
