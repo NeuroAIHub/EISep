@@ -13,7 +13,8 @@ from torch import optim
 from net.rnncell_variant import SimpleRNNCell, EIRNNCell, SimpleGRUCell, Noshare_EIGRUCell, \
     EIGRUCell, SimpleLSTMCell, EILSTMCell, \
     Fixed_EIRNNCell, EntryEIRNNCell, Fixed_EntryEIRNNCell, \
-    Fixed_EILSTMCell, EntryEILSTMCell, Fixed_EntryEILSTMCell, Noshare_EILSTMCell
+    Fixed_EILSTMCell, EntryEILSTMCell, Fixed_EntryEILSTMCell, Noshare_EILSTMCell, \
+    Cstr_SimpleRNNCell
 from net.ffn import FFNCell
 from net.rnncell_variant_2 import DANNCell, ColEICell, DBPNCell
 from torch import distributions as pyd
@@ -274,12 +275,17 @@ class A2C(nn.Module):
         # define actor and critic networks
         # self.critic = nn.Sequential(*critic_layers).to(self.device)
         # self.actor = nn.Sequential(*actor_layers).to(self.device)
-        assert (simple_type in ['rnn', 'gru', 'lstm', 'linear']) \
+        assert (simple_type in ['rnn', 'cstr_rnn', 'gru', 'lstm', 'linear']) \
             and (ei_type in ['eisep', 'dbpn', 'fixed_eisep', 'entryei', 'fixed_entryei', \
                              'dann_sgd', 'colei_sgd', 'dann_adam', 'colei_adam', 'absolute_eisep',\
                                 'eisep_init_ColEI', 'eisep_init_DBPN']), 'No valid configuration'
-        if simple_type == 'rnn':
-            simple_cell_fn = SimpleRNNCell
+        if 'rnn' in simple_type:
+            if simple_type == 'rnn':
+                simple_cell_fn = SimpleRNNCell
+            elif simple_type == 'cstr_rnn':
+                simple_cell_fn = Cstr_SimpleRNNCell
+            else:
+                simple_cell_fn = None
             if ei_type == 'eisep':
                 ei_cell_fn = EIRNNCell
             elif ei_type == 'eisep_init_ColEI':
@@ -517,7 +523,6 @@ class A2C(nn.Module):
             self.actor.set_temperature(temperature)
         if temperature < 0:
             self.ei_entropy_loss_coef = 0.0
-
 
 
 class ContinuousA2C(nn.Module):

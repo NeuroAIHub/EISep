@@ -36,6 +36,89 @@ class SimpleRNNCell(nn.Module):
         self.Wrec_free = nn.Parameter(torch.randn((hidden_size, hidden_size)) * std)
         self.bias = nn.Parameter(torch.zeros((hidden_size,)))
         self.act = nn.Tanh()
+        ###TODO: change the activation function back to tanh
+        # self.act = nn.ReLU()
+        if extra_mlp:
+            print("Using extra mlp layer in SimpleRNNCell")
+            self.output_layer = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                self.act,
+                nn.Linear(hidden_size, output_size)
+            )
+        else:
+            self.output_layer = nn.Linear(hidden_size, output_size)
+
+
+        # init input_layer orthogonally
+        for m in [self.input_layer, self.output_layer]:
+            if isinstance(m, nn.Sequential):
+                for layer in m:
+                    if isinstance(layer, nn.Linear):
+                        nn.init.orthogonal_(layer.weight)
+                        nn.init.normal_(layer.bias, mean=0, std=std)
+            elif isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight)
+                nn.init.normal_(m.bias, mean=0, std=std)
+
+    def forward(self, input: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the RNN cell.
+
+        Args:
+            input: The input tensor with shape (batch_size, input_size).
+            hidden: The hidden state tensor with shape (batch_size, hidden_size).
+
+        Returns:
+            The next hidden state tensor with shape (batch_size, hidden_size).
+        # """
+        # assert input.shape[1:] == (self.h, self.w, self.c)
+        # input_permute = input.permute(0,3,1,2)  # reshape to (batch_size, c, h, w)
+        h = self.act( self.input_layer(input) + hidden@self.Wrec_free.T + self.bias )
+        out = self.output_layer(h)
+        return out, h
+
+    def get_actual_weight(self):
+        return self.Wrec_free
+
+    def reset_hidden_on_done(self, hidden, done_mask):
+        assert done_mask.dim() == 2 and done_mask.shape[1] == 1
+        return hidden * (1 - done_mask)
+
+    def detach_hidden(self, hidden):
+        return hidden.detach()
+
+class Cstr_SimpleRNNCell(nn.Module):
+    """
+    A simple RNN cell implementation.
+
+    Args:
+        input_size: The number of input features.
+        hidden_size: The number of features in the hidden state.
+    """
+
+    def __init__(self, input_size, hidden_size: int, output_size: int, extra_mlp: bool = False) -> None:
+        """Initializes the weights and biases of the RNN cell."""
+        print('Using constrained-initialized Simple RNN Cell')
+        super().__init__()
+        self.input_size = input_size
+        # self.h, self.w, self.c = self.input_size
+        self.hidden_size = hidden_size
+        # h=210, w=160, c=3 for Breakout
+        # self.input_layer = nn.Sequential(nn.Conv2d(self.c, 16, kernel_size=8, stride=4), nn.ReLU(),
+        #                                  nn.Conv2d(16, 32, kernel_size=8, stride=4), nn.ReLU(),
+        #                                  nn.Conv2d(32, 32, kernel_size=4, stride=3), nn.ReLU(),
+        #                                  nn.Flatten(),
+        #                                  nn.Linear(192, hidden_size))
+        self.input_layer = nn.Linear(input_size, hidden_size)
+        std = 1.0 / np.sqrt(hidden_size)
+        # self.Wrec_free = nn.Parameter(torch.randn((hidden_size, hidden_size)) * std)
+        Wrec_free = nn.ReLU()(torch.randn(hidden_size, hidden_size) * std)
+        mask = torch.where(torch.rand(hidden_size, hidden_size) > 0.5, 1, -1)  # Random mask for sparsity
+        self.Wrec_free = nn.Parameter(Wrec_free * mask.float())  # Apply mask to recurrent weights
+        self.Wrec_free.requires_grad = True
+
+        self.bias = nn.Parameter(torch.zeros((hidden_size,)))
+        self.act = nn.Tanh()
         if extra_mlp:
             print("Using extra mlp layer in SimpleRNNCell")
             self.output_layer = nn.Sequential(
@@ -114,6 +197,8 @@ class EIRNNCell(nn.Module):
 
         self.extra_mlp = extra_mlp
         self.act = nn.Tanh()
+        ###TODO change the activation function back
+        # self.act = nn.ReLU()
         if extra_mlp:
             print("Using extra mlp layer in EIRNNCell")
             self.output_layer = nn.Sequential(

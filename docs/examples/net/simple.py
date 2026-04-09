@@ -34,6 +34,9 @@ class simpleRNN(nn.Module):
         # print('Wrec_free after ReLU:', self.Wrec_free.device)
         self.bias = nn.Parameter(torch.randn(hidden_size) * std)
         self.act = nn.Softplus()
+        # self.act = nn.ReLU()
+        # print('Using ReLU as activation function')
+        ###TODO: using relu as activation function
         self.output_layer = nn.Linear(hidden_size, output_size)
         if ei_linear_block is not None:
             if 'output' in ei_linear_block:
@@ -69,8 +72,8 @@ class simpleRNN(nn.Module):
             # no loop over layers
             input_gate = self.input_layer(layer_in)  # (B, H)
 
-            # 3) rec input
-            rec_in = h @ self.Wrec_free.T + self.bias          # (B, H)
+            # 3) rec input#TODO: 其实这里应该用self.Wrec_free.T
+            rec_in = h @ self.Wrec_free + self.bias          # (B, H)
             # 4) new hidden
             new_h    = self.act(input_gate + rec_in)                   # (B, H)
 
@@ -241,6 +244,87 @@ class simpleRNN(nn.Module):
         lambda_i = lambda_j.mean(dim=0)  # (H,)
 
         return lambda_i, lambda_j
+    def get_ei_entropy_loss(self):
+        entropy_loss = 0.0
+        for m in [self.input_layer, self.output_layer]:
+            if isinstance(m, EI_Linear):
+                entropy_loss += m.get_ei_entropy_loss()
+        return entropy_loss
+
+class Cstr_simpleRNN(nn.Module):
+    """A simple RNN with a single hidden layer."""
+    def __init__(self, input_size: int, hidden_size: int, output_size: int, ei_linear_block = None):
+        super(Cstr_simpleRNN, self).__init__()
+        print('Using constrained-initialized simpleRNN')
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.input_layer = nn.Linear(input_size, hidden_size)
+        std = np.sqrt(1/hidden_size)
+        # std = 0.1
+        ### control variable Cstr-Simple
+        Wrec_free = nn.ReLU()(torch.randn(hidden_size, hidden_size) * std)
+        mask = torch.where(torch.rand(hidden_size, hidden_size) > 0.5, 1, -1)  # Random mask for sparsity
+        self.Wrec_free = nn.Parameter(Wrec_free * mask.float())  # Apply mask to recurrent weights
+        self.Wrec_free.requires_grad = True
+        ### normal init
+        # self.Wrec_free = nn.Parameter(torch.randn(hidden_size, hidden_size) * std)
+
+        # print('Wrec_free:', self.Wrec_free.device)
+        # self.Wrec_free = nn.ReLU()(self.Wrec_free)  # Ensure non-negative recurrent weights
+        # print('Wrec_free after ReLU:', self.Wrec_free.device)
+        self.bias = nn.Parameter(torch.randn(hidden_size) * std)
+        self.act = nn.Softplus()
+        self.output_layer = nn.Linear(hidden_size, output_size)
+        # self.output_layer = EI_Linear(hidden_size, output_size)
+        # nn.init.orthogonal_(self.Wrec_free)  # Initialize recurrent weights orthogonally
+        for m in [self.input_layer, self.output_layer]:
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight)
+                nn.init.normal_(m.bias, mean=0, std=std)
+
+    def forward(self, x, hx=None):
+        # x: (T, B, D_in)
+        T, B, _ = x.shape
+        device  = x.device
+
+        # init or unpack hidden/cell: (L, B, H)
+        if hx is None:
+            h = x.new_zeros(B, self.hidden_size)
+            c = x.new_zeros(B, self.hidden_size)
+        else:
+            h, c = hx
+
+        outputs = []
+        hs = []
+        cs = []
+        rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
+        # loop over time
+        for t in range(T):
+            layer_in = x[t]  # (B, D_in) or (B, H)
+            # no loop over layers
+            input_gate = self.input_layer(layer_in)  # (B, H)
+
+            # 3) rec input#TODO: 其实这里应该用self.Wrec_free.T
+            rec_in = h @ self.Wrec_free + self.bias          # (B, H)
+            # 4) new hidden
+            new_h    = self.act(input_gate + rec_in)                   # (B, H)
+
+            new_c = c
+
+            hs.append(new_h)  # (B, H)
+            cs.append(new_c)  # (B, H)
+            rec_ins[t] = rec_in
+            h = new_h  # (B, H)
+            c = new_c  # (B, H)
+            # project top-layer hidden to output
+            outputs.append(self.output_layer(new_h))  # (B, H)
+
+        # (T, B, H)
+        output_seq = torch.stack(outputs, dim=0)
+        h_seq = torch.stack(hs, dim=0)  # (T, B, H)
+        c_seq = torch.stack(cs, dim=0)  # (T, B, H)
+        return output_seq, (h_seq, c_seq, rec_ins.abs().mean((1,2)))
     def get_ei_entropy_loss(self):
         entropy_loss = 0.0
         for m in [self.input_layer, self.output_layer]:
@@ -444,6 +528,47 @@ class SimpleNet(nn.Module):
     def get_ei_entropy_loss(self):
         return self.lstm.get_ei_entropy_loss()
 
+class Cstr_SimpleNet(nn.Module):
+    """A simple RNN with a single hidden layer."""
+    def __init__(self, num_h: int, ob_size: int, act_size: int, ei_linear_block = None):
+        super(Cstr_SimpleNet, self).__init__()
+        self.hidden_size = num_h
+        self.input_size = ob_size
+        self.output_size = act_size
+        self.entropy_loss = False
+        self.lstm = Cstr_simpleRNN(ob_size, num_h, act_size, ei_linear_block)
+
+    def forward(self, x):
+        # x: (T, B, D_in)
+        out, hidden = self.lstm(x)
+        # print('history shape:', history.shape, 'hidden shape:', hidden.shape)
+        return out, None, hidden
+    def forward_using_weight(self, x, weight):
+        # x: (T, B, D_in)
+        out, hidden = self.lstm.forward_using_weight(x, weight)
+        return out, hidden
+    def sc_forward(self, x, sparsity_mask):
+        out, hidden = self.lstm.sc_forward(x=x, sparsity_mask=sparsity_mask)
+        return out, None, hidden
+
+    def init_hidden(self, batch_size, device):
+        h0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
+        c0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
+        return (h0, c0)
+    def get_actual_weight(self):
+        """Get the actual recurrent weight matrix."""
+        return self.lstm.Wrec_free
+    def compute_lyapunov_spectrum(self, x, hx=None):
+        """Compute the Lyapunov spectrum of the model."""
+        return self.lstm.compute_lyapunov_spectrum(x, hx)
+    def get_weight_loss(self):
+        weight_loss = 0.0
+        weight_loss += self.lstm.Wrec_free.abs().mean()
+        weight_loss += self.lstm.input_layer.weight.abs().mean()
+        weight_loss += self.lstm.output_layer.weight.abs().mean()
+        return weight_loss
+    def get_ei_entropy_loss(self):
+        return self.lstm.get_ei_entropy_loss()
 
 class Ccstr_SimpleNet(nn.Module):
     """A simple RNN with a single hidden layer."""

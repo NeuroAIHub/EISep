@@ -8,7 +8,7 @@ from torch.nn import functional as F
 from net.colei import ColEI
 from net.dann import DANN
 from net.eisep import EISepNet
-from net.simple import SimpleNet, Ccstr_SimpleNet
+from net.simple import SimpleNet, Ccstr_SimpleNet, Cstr_SimpleNet
 from net.dbp import DBPN
 from net.entryei import EntryEINet
 import os
@@ -56,6 +56,8 @@ def init_model(ob_size, hidden_size, act_size, model_name):
     elif 'simple' in model_name:
         if 'ccstr' in model_name:
             net = Ccstr_SimpleNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size)
+        elif 'cstr' in model_name:
+            net = Cstr_SimpleNet(ob_size=ob_size, num_h=hidden_size, act_size=act_size)
         elif '_ei_' in model_name:
             if model_name == 'simple_ei_input':
                 ei_linear_block = ['input']

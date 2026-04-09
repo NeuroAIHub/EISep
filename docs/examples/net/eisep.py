@@ -83,7 +83,9 @@ class EISepRNN(nn.Module):
 
         # self.output_layer = EI_Linear(hidden_size, output_size)
         self.act          = nn.Softplus()
-
+        # self.act = nn.ReLU()
+        # print('Using ReLU as activation function')
+        ##TODO: using relu as activation function
 
         self.training = True
         ###
@@ -101,7 +103,7 @@ class EISepRNN(nn.Module):
             print('Using DBPN initialization')
             self.init_weights_DBPN()
         self.gumbel_temperature = 0.1
-
+        
     def init_weights_ColEI(self):
         """
         todo
@@ -486,6 +488,7 @@ class EISepNet(nn.Module):
 
     def set_temperature(self, temperature: float):
         """Set the temperature for the Gumbel-Softmax sampling."""
+        print(f'change temperature to {temperature}')
         self.lstm.gumbel_temperature = temperature
 
     def init_hidden(self, batch_size, device):
