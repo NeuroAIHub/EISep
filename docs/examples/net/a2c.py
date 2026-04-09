@@ -511,10 +511,12 @@ class A2C(nn.Module):
         return (h_critic, h_actor)
 
     def set_temperature(self, temperature, module):
-        if module in ['critic', 'both']:
+        if module in ['critic', 'both'] and isinstance(module, EIRNNCell):
             self.critic.set_temperature(temperature)
-        if module in ['actor', 'both']:
+        if module in ['actor', 'both'] and isinstance(module, EIRNNCell):
             self.actor.set_temperature(temperature)
+        if temperature < 0:
+            self.ei_entropy_loss_coef = 0.0
 
 
 

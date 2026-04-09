@@ -100,6 +100,7 @@ class EISepRNN(nn.Module):
         elif init_choice == 'DBPN':
             print('Using DBPN initialization')
             self.init_weights_DBPN()
+        self.gumbel_temperature = 0.1
 
     def init_weights_ColEI(self):
         """
@@ -180,9 +181,9 @@ class EISepRNN(nn.Module):
             # no loop over layers
             input_gate = self.input_layer(layer_in)  # (B, H)
             ###
-            if self.training:
+            if self.training and self.gumbel_temperature > 0:
                 mask = F.gumbel_softmax(self.eimask_logit,
-                            tau=0.1, hard=False, dim=-1)
+                            tau=self.gumbel_temperature, hard=False, dim=-1)
                 # mask = F.softmax(self.eimask_logit/temperature, dim=-1)
                 ei_code = mask[:, 0] - mask[:, 1]
                 # ei_code = self.eicode_origin
@@ -485,7 +486,7 @@ class EISepNet(nn.Module):
 
     def set_temperature(self, temperature: float):
         """Set the temperature for the Gumbel-Softmax sampling."""
-        self.temperature = temperature
+        self.lstm.gumbel_temperature = temperature
 
     def init_hidden(self, batch_size, device):
         h0 = torch.zeros(1, batch_size, self.hidden_size).to(device)
