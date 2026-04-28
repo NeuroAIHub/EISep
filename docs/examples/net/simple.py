@@ -264,12 +264,19 @@ class Cstr_simpleRNN(nn.Module):
         # std = 0.1
         ### control variable Cstr-Simple
         Wrec_free = nn.ReLU()(torch.randn(hidden_size, hidden_size) * std)
-        mask = torch.where(torch.rand(hidden_size, hidden_size) > 0.5, 1, -1)  # Random mask for sparsity
-        self.Wrec_free = nn.Parameter(Wrec_free * mask.float())  # Apply mask to recurrent weights
+        # mask = torch.where(torch.rand(hidden_size, hidden_size) > 0.5, 1, -1)  # Random mask for sparsity
+        # self.Wrec_free = nn.Parameter(Wrec_free * mask.float())  # Apply mask to recurrent weights
+        # self.Wrec_free.requires_grad = True
+        ### eisep_cstr init
+        # mask = torch.where(torch.rand(hidden_size, hidden_size) > 0.5, 1, -1)  # Random mask for sparsity
+        # self.Wrec_free = nn.Parameter(Wrec_free * mask.float())  # Apply mask to recurrent weights
+        # self.Wrec_free.requires_grad = True
+        ### eisep_cstr init
+        print("EISep-Cstr_Simple")
+        self.eimask_logit = nn.Parameter(torch.randn(hidden_size, 2)*std)
+        ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
+        self.Wrec_free = nn.Parameter(Wrec_free @ torch.diag(ei_code))     # (H, H)
         self.Wrec_free.requires_grad = True
-        ### normal init
-        # self.Wrec_free = nn.Parameter(torch.randn(hidden_size, hidden_size) * std)
-
         # print('Wrec_free:', self.Wrec_free.device)
         # self.Wrec_free = nn.ReLU()(self.Wrec_free)  # Ensure non-negative recurrent weights
         # print('Wrec_free after ReLU:', self.Wrec_free.device)
@@ -306,7 +313,7 @@ class Cstr_simpleRNN(nn.Module):
             input_gate = self.input_layer(layer_in)  # (B, H)
 
             # 3) rec input#TODO: 其实这里应该用self.Wrec_free.T
-            rec_in = h @ self.Wrec_free + self.bias          # (B, H)
+            rec_in = h @ self.Wrec_free.T + self.bias          # (B, H)
             # 4) new hidden
             new_h    = self.act(input_gate + rec_in)                   # (B, H)
 

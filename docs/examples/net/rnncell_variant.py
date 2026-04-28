@@ -113,8 +113,13 @@ class Cstr_SimpleRNNCell(nn.Module):
         std = 1.0 / np.sqrt(hidden_size)
         # self.Wrec_free = nn.Parameter(torch.randn((hidden_size, hidden_size)) * std)
         Wrec_free = nn.ReLU()(torch.randn(hidden_size, hidden_size) * std)
-        mask = torch.where(torch.rand(hidden_size, hidden_size) > 0.5, 1, -1)  # Random mask for sparsity
-        self.Wrec_free = nn.Parameter(Wrec_free * mask.float())  # Apply mask to recurrent weights
+        # mask = torch.where(torch.rand(hidden_size, hidden_size) > 0.5, 1, -1)  # Random mask for sparsity
+        # self.Wrec_free = nn.Parameter(Wrec_free * mask.float())  # Apply mask to recurrent weights
+        # self.Wrec_free.requires_grad = True
+        print("EISep-Cstr_Simple")
+        self.eimask_logit = nn.Parameter(torch.randn(hidden_size, 2)*std)
+        ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
+        self.Wrec_free = nn.Parameter(Wrec_free @ torch.diag(ei_code))     # (H, H)
         self.Wrec_free.requires_grad = True
 
         self.bias = nn.Parameter(torch.zeros((hidden_size,)))
@@ -229,6 +234,10 @@ class EIRNNCell(nn.Module):
             self.init_weights_DBPN()
         self.training = True
         self.temperature = 0.1
+
+    def load_logit(self, logit):
+        assert logit.shape == self.eimask_logit.shape
+        self.eimask_logit.data.copy_(logit)
 
     def init_weights_ColEI(self):
         """

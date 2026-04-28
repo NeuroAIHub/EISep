@@ -103,7 +103,7 @@ class EISepRNN(nn.Module):
             print('Using DBPN initialization')
             self.init_weights_DBPN()
         self.gumbel_temperature = 0.1
-        
+
     def init_weights_ColEI(self):
         """
         todo
@@ -178,6 +178,10 @@ class EISepRNN(nn.Module):
         cs = torch.zeros(T, B, self.hidden_size, device=device)  # (T, B, H)
         rec_ins = torch.zeros(T, B, self.hidden_size, device=device)
         # loop over time
+
+        self.actual_grads = []       # reset each forward pass
+        self.actuals = []            # optionally store the forward values too
+
         for t in range(T):
             layer_in = x[t]  # (B, D_in) or (B, H)
             # no loop over layers
@@ -199,6 +203,14 @@ class EISepRNN(nn.Module):
             #     ei_code = mask[:, 0] - mask[:, 1]
             Wrec   = self.rec_filter(self.Wrec_free)        # (H, H)
             actual = Wrec @ torch.diag(ei_code)     # (H, H)
+
+            # --- gradient hook ---
+            # retain_grad() lets us inspect .grad on a non-leaf tensor after backward
+            if self.training:
+                actual.retain_grad()
+                self.actuals.append(actual)
+                actual.register_hook(lambda grad: self.actual_grads.append(grad.clone()))
+            # ---------------------
             # 3) rec input
             rec_in = h @ actual.T + self.bias          # (B, H)
             # 4) new hidden

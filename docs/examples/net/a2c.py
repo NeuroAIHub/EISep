@@ -3,6 +3,7 @@
 # License: MIT License
 
 from __future__ import annotations
+from copyreg import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -358,6 +359,12 @@ class A2C(nn.Module):
         self.actor.to(device)
         return self
 
+    def load_logit(self, state_dict):
+        if hasattr(self.critic, 'get_ei_entropy_loss'):
+            self.critic.load_logit(state_dict['critic.eimask_logit'])
+        if hasattr(self.actor, 'get_ei_entropy_loss'):
+            self.actor.load_logit(state_dict['actor.eimask_logit'])
+
     def forward(self, x: np.ndarray, hidden: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         """
         Forward pass of the networks.
@@ -457,7 +464,7 @@ class A2C(nn.Module):
         return (critic_loss, actor_loss)
 
     def update_parameters(
-        self, critic_loss: torch.Tensor, actor_loss: torch.Tensor
+        self, critic_loss: torch.Tensor, actor_loss: torch.Tensor, l1_coef = None
     ) -> None:
         """
         Updates the parameters of the actor and critic networks.
@@ -473,6 +480,9 @@ class A2C(nn.Module):
             if hasattr(m, 'get_ei_entropy_loss'):
                 ei_entropy_loss = m.get_ei_entropy_loss() * self.ei_entropy_loss_coef
                 loss += ei_entropy_loss  # weight for EI entropy loss
+        if l1_coef is not None:
+            l1_norm = self.critic.get_actual_weight().abs().mean() + self.actor.get_actual_weight().abs().mean()
+            loss += l1_coef * l1_norm
         loss.backward()
         for m, optim in zip([self.critic, self.actor], [self.critic_optim, self.actor_optim]):
 
