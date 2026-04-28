@@ -104,6 +104,10 @@ class EISepRNN(nn.Module):
             self.init_weights_DBPN()
         self.gumbel_temperature = 0.1
 
+    def load_logit(self, state_dict):
+        assert state_dict['lstm.eimask_logit'].shape == self.eimask_logit.shape
+        self.eimask_logit.data.copy_(state_dict['lstm.eimask_logit'])
+
     def init_weights_ColEI(self):
         """
         todo
@@ -476,6 +480,7 @@ class EISepNet(nn.Module):
             self.lstm = FixedEISepRNN(ob_size, num_h, act_size)
         self.temperature = None
         self.entropy_loss = entropy_loss
+        print('hidden_size:', num_h)
         # self.linear = nn.Linear(num_h, act_size)
 
     def forward(self, x):
@@ -524,6 +529,9 @@ class EISepNet(nn.Module):
             return self.lstm.get_ei_entropy_loss()
         else:
             return 0.0
+
+    def load_logit(self, state_dict):
+        self.lstm.load_logit(state_dict)
 
 
 
