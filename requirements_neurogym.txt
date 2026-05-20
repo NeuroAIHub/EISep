@@ -1,0 +1,24 @@
+# Lightweight pip requirements for the NeuroGym environment used by
+# multi-task learning, continual learning, initialization, and supervised
+# sequence experiments.
+#
+# For an exact conda export, use:
+#   conda env create -f multitask_continual_environment.yml
+
+torch==2.8.0
+torchvision==0.23.0
+neurogym==2.2.0
+gymnasium==0.29.1
+numpy==2.1.3
+scipy==1.14.1
+pandas==2.3.1
+matplotlib==3.9.4
+seaborn==0.13.2
+scikit-learn==1.7.1
+networkx==3.5
+hmmlearn==0.3.3
+ipykernel==6.29.5
+jupyter-client==8.6.3
+jupyter-core==5.8.1
+tqdm==4.67.1
+pyyaml==6.0.2
