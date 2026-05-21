@@ -23,9 +23,7 @@ def plot_subplot(ax, results_path, metric, title, y_label, is_log_y):
         return None, None
 
     
-    # model_order = ['eisep', 'simple', 'eisep_ei_input', 'eisep_ei_output', 'eisep_ei_both', 'simple_ei_input', 'simple_ei_output', 'simple_ei_both']
-    model_order = ['eisep', 'unconstrained_simple', 'dann_sgd', 'dann_adam', 'colei_sgd', 'colei_adam', 'dbpn']
-    
+    model_order = ['eisep', 'simple', 'eisep_ei_input', 'eisep_ei_output', 'eisep_ei_both', 'simple_ei_input', 'simple_ei_output', 'simple_ei_both']
     legend_map = {
         'eisep': 'EISep',
         'unconstrained_simple': 'Simple',
@@ -145,7 +143,7 @@ def visualize_combined_results():
 
     handles, labels = plot_subplot(
         axes[0],
-        'results_linear/adding_problem/benchmark_results.pkl',
+        'results/adding_problem1/benchmark_results1.pkl',
         'test_mse',
         'Adding Problem',
         'Test MSE (lower is better)',
@@ -154,7 +152,7 @@ def visualize_combined_results():
 
     plot_subplot(
         axes[1],
-        'results_linear/sequential_mnist/benchmark_results.pkl',
+        'results/sequential_mnist/benchmark_results.pkl',
         'test_accuracy',
         'Sequential MNIST',
         'Test Accuracy (higher is better)',
@@ -163,7 +161,7 @@ def visualize_combined_results():
 
     plot_subplot(
         axes[2],
-        'results_linear/sort_problem/benchmark_results.pkl',
+        'results/sort_problem/benchmark_results.pkl',
         'test_accuracy',
         'Sorting Problem',
         'Test Accuracy (higher is better)',
@@ -180,6 +178,8 @@ def visualize_combined_results():
             bbox_to_anchor=(0.5, -0.05),
             ncol=len(legend_dict),
             fontsize=15
+            # title='Model',
+            # title_fontsize=18
         )
 
     plt.tight_layout(rect=[0, 0.05, 1, 1])
