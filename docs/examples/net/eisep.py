@@ -103,6 +103,54 @@ class EISepRNN(nn.Module):
             print('Using DBPN initialization')
             self.init_weights_DBPN()
         self.gumbel_temperature = 0.1
+        # Opt-in instrumentation for quantifying the signs used by the stochastic
+        # forward computation. Keeping this disabled by default avoids retaining
+        # training histories in ordinary experiments.
+        self.track_signs = False
+        self.retain_sign_history = True
+        self.sampled_sign_history = []
+        self.preferred_sign_history = []
+        self.last_sampled_signs = None
+        self.last_preferred_sign = None
+
+    def enable_sign_tracking(self, reset=True, retain_history=True):
+        """Record sampled and logit-preferred signs for every training forward call.
+
+        ``sampled_sign_history`` receives one uint8 tensor of shape ``(T, H)``
+        per call. ``preferred_sign_history`` receives the corresponding
+        deterministic logit argmax signs, with shape ``(H,)``. Values are encoded
+        as 1 for excitatory and 0 for inhibitory. Tensors stay on the model device
+        during collection to avoid synchronizing every GPU forward call. Setting
+        ``retain_history=False`` exposes only ``last_sampled_signs`` and
+        ``last_preferred_sign``; this is useful when an outer compiled training
+        loop owns the history buffers.
+        """
+        if reset:
+            self.reset_sign_tracking()
+        self.track_signs = True
+        self.retain_sign_history = retain_history
+
+    def disable_sign_tracking(self):
+        """Stop recording signs without clearing the existing history."""
+        self.track_signs = False
+
+    def reset_sign_tracking(self):
+        """Clear all recorded forward-sign histories."""
+        self.sampled_sign_history = []
+        self.preferred_sign_history = []
+        self.last_sampled_signs = None
+        self.last_preferred_sign = None
+
+    def get_sign_history(self):
+        """Return recorded histories as ``(forward, time, neuron)`` tensors."""
+        if not self.sampled_sign_history:
+            empty_sampled = torch.empty((0, 0, self.hidden_size), dtype=torch.uint8)
+            empty_preferred = torch.empty((0, self.hidden_size), dtype=torch.uint8)
+            return empty_sampled, empty_preferred
+        return (
+            torch.stack(self.sampled_sign_history),
+            torch.stack(self.preferred_sign_history),
+        )
 
     def load_logit(self, state_dict):
         assert state_dict['lstm.eimask_logit'].shape == self.eimask_logit.shape
@@ -185,6 +233,15 @@ class EISepRNN(nn.Module):
 
         self.actual_grads = []       # reset each forward pass
         self.actuals = []            # optionally store the forward values too
+        sampled_signs = (
+            torch.empty((T, self.hidden_size), dtype=torch.uint8, device=device)
+            if self.track_signs and self.training else None
+        )
+        if sampled_signs is not None:
+            preferred_sign = (
+                self.eimask_logit[:, 0] > self.eimask_logit[:, 1]
+            ).detach()
+        Wrec = self.rec_filter(self.Wrec_free)  # (H, H)
 
         for t in range(T):
             layer_in = x[t]  # (B, D_in) or (B, H)
@@ -196,6 +253,8 @@ class EISepRNN(nn.Module):
                             tau=self.gumbel_temperature, hard=False, dim=-1)
                 # mask = F.softmax(self.eimask_logit/temperature, dim=-1)
                 ei_code = mask[:, 0] - mask[:, 1]
+                if sampled_signs is not None:
+                    sampled_signs[t] = mask[:, 0] > mask[:, 1]
                 # ei_code = self.eicode_origin
             else:
                 ei_code = torch.where(self.eimask_logit[:, 0] > self.eimask_logit[:, 1], 1., -1.)
@@ -205,8 +264,9 @@ class EISepRNN(nn.Module):
             # else:
             #     mask = (self.eimask_logit/temperature).softmax(dim=-1)  # (H, 2)
             #     ei_code = mask[:, 0] - mask[:, 1]
-            Wrec   = self.rec_filter(self.Wrec_free)        # (H, H)
-            actual = Wrec @ torch.diag(ei_code)     # (H, H)
+            # Right-multiplication by diag(ei_code) scales the columns of Wrec.
+            # Expressing it elementwise avoids an unnecessary dense matmul.
+            actual = Wrec * ei_code.unsqueeze(0)     # (H, H)
 
             # --- gradient hook ---
             # retain_grad() lets us inspect .grad on a non-leaf tensor after backward
@@ -227,6 +287,12 @@ class EISepRNN(nn.Module):
             h = new_h  # (B, H)
             c = new_c  # (B, H)
             outputs[t] = self.output_layer(new_h)
+        if sampled_signs is not None:
+            self.last_sampled_signs = sampled_signs
+            self.last_preferred_sign = preferred_sign.to(dtype=torch.uint8)
+            if self.retain_sign_history:
+                self.sampled_sign_history.append(self.last_sampled_signs)
+                self.preferred_sign_history.append(self.last_preferred_sign)
         output_seq = outputs
         h_seq = hs
         c_seq = cs
