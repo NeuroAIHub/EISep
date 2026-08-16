@@ -1,0 +1,23 @@
+\begin{table}[t]
+  \centering
+  \caption{A2C performance across critic/actor learning rates (mean $\pm$ SE, $n = 5$). Bold entries indicate the best configuration for each (lr\_a, lr\_c) pair.}
+  \label{tab:a2c_dense_lines}
+  \setlength{\tabcolsep}{3pt}
+  \renewcommand{\arraystretch}{0.9}
+  \scriptsize
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{lr\_c $\backslash$ lr\_a} & $\mathbf{3\times10^{-4}}$ & $\mathbf{10^{-3}}$ & $\mathbf{3\times10^{-3}}$ \\
+    \midrule
+    $\mathbf{1.5\times10^{-3}}$ & \makecell[tc]{\mathbf{$32.14 \pm 3.73$}\\[1pt]$-83.03 \pm 10.50$\\[1pt]$31.70 \pm 3.33$\\[1pt]$-96.87 \pm 11.17$} & \makecell[tc]{$7.73 \pm 2.34$\\[1pt]$-61.25 \pm 10.63$\\[1pt]\mathbf{$39.69 \pm 5.12$}\\[1pt]$-51.29 \pm 9.97$} & \makecell[tc]{$-137.39 \pm 23.13$\\[1pt]\mathbf{$50.41 \pm 9.01$}\\[1pt]$-22.24 \pm 6.37$\\[1pt]$21.39 \pm 7.58$} \\
+    \midrule
+    $\mathbf{5\times10^{-3}}$ & \makecell[tc]{$18.59 \pm 2.88$\\[1pt]$-60.67 \pm 8.32$\\[1pt]\mathbf{$50.14 \pm 6.58$}\\[1pt]$-85.67 \pm 10.64$} & \makecell[tc]{$14.44 \pm 3.11$\\[1pt]$-63.21 \pm 10.11$\\[1pt]\mathbf{$60.48 \pm 6.60$}\\[1pt]$12.78 \pm 6.07$} & \makecell[tc]{$10.79 \pm 2.98$\\[1pt]$32.36 \pm 8.17$\\[1pt]$10.25 \pm 4.65$\\[1pt]\mathbf{$53.58 \pm 10.09$}} \\
+    \midrule
+    $\mathbf{1.5\times10^{-2}}$ & \makecell[tc]{$15.17 \pm 2.57$\\[1pt]$-70.22 \pm 10.27$\\[1pt]\mathbf{$97.08 \pm 8.68$}\\[1pt]$-62.15 \pm 7.35$} & \makecell[tc]{$8.48 \pm 3.65$\\[1pt]$3.14 \pm 5.50$\\[1pt]$-1.32 \pm 9.32$\\[1pt]\mathbf{$57.08 \pm 6.66$}} & \makecell[tc]{$-25.71 \pm 7.46$\\[1pt]$1.20 \pm 6.37$\\[1pt]\mathbf{$59.20 \pm 7.15$}\\[1pt]$42.38 \pm 8.78$} \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{3pt}
+  \footnotesize \textit{Actor LRs:} $3\times10^{-4},\,10^{-3},\,3\times10^{-3}$;\; \textit{{Critic LRs:}} $1.5\times10^{-3},\,5\times10^{-3},\,1.5\times10^{-2}$.\\
+  \textit{Order in each cell (top to bottom):} Simple, EISep(A), EISep(C), EISep(A+C).
+\end{table}

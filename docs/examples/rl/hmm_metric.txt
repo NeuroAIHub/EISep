@@ -1,0 +1,79 @@
+simple critic
+HMM Train ll: 395.8606033955762
+HMM Test ll: 396.8838805440043
+HMM Train confidence: 0.998399211089755
+HMM Test confidence: 0.9993594655492851
+HMM Train switch rate: 0.9676209526190774
+HMM Test switch rate: 0.9779889944972486
+HMM T stickiness: 0.11876663001394475
+HMM T entropy: 0.274479540506133
+eisep_all critic
+HMM Train ll: 337.4321676022707
+HMM Test ll: 298.16540721541946
+HMM Train confidence: 0.9998891071405764
+HMM Test confidence: 0.9985944282550038
+HMM Train switch rate: 0.013941220798794273
+HMM Test switch rate: 0.02451225612806403
+eisep_all critic
+HMM Train ll: 195.3683089898787
+HMM Test ll: 106.19181060867906
+HMM Train confidence: 0.9999994497350385
+HMM Test confidence: 0.9992131810767626
+HMM Train switch rate: 0.0379386658235852
+HMM Test switch rate: 0.03925014645577036
+eisep_all critic
+HMM Train ll: 337.4321676022697
+HMM Test ll: 298.1654305314447
+HMM Train confidence: 0.9998891071795744
+HMM Test confidence: 0.9985944378144953
+HMM Train switch rate: 0.013941220798794273
+HMM Test switch rate: 0.02451225612806403
+eisep_all critic
+HMM Train ll: 337.4321676022623
+HMM Test ll: 298.16538810512037
+HMM Train confidence: 0.999889107134495
+HMM Test confidence: 0.9985944223173624
+HMM Train switch rate: 0.013941220798794273
+HMM Test switch rate: 0.02451225612806403
+simple critic
+HMM Train ll: 407.2629451630832
+HMM Test ll: 409.26395572124517
+HMM Train confidence: 0.9999520199757055
+HMM Test confidence: 1.0
+HMM Train switch rate: 0.6714589323665459
+HMM Test switch rate: 0.6668334167083542
+eisep_all actor
+HMM Train ll: 162.79258656293052
+HMM Test ll: 156.2881342039576
+HMM Train confidence: 0.9985480360507132
+HMM Test confidence: 0.995042419612535
+HMM Train switch rate: 0.13941220798794274
+HMM Test switch rate: 0.14107053526763383
+simple actor
+HMM Train ll: 105.29273206379614
+HMM Test ll: 106.27562918573226
+HMM Train confidence: 0.9999836849746969
+HMM Test confidence: 0.99869234189648
+HMM Train switch rate: 0.8413551693961745
+HMM Test switch rate: 0.8419209604802401
+simple critic
+HMM Train ll: 399.90082734560633
+HMM Test ll: 401.22966964530696
+HMM Train confidence: 0.999415152862237
+HMM Test confidence: 0.9991244054715207
+HMM Train switch rate: 0.6677084635579448
+HMM Test switch rate: 0.6678339169584793
+eisep_all critic
+HMM Train ll: 337.4321676022517
+HMM Test ll: 298.1653716589857
+HMM Train confidence: 0.9998891071654616
+HMM Test confidence: 0.9985944278493893
+HMM Train switch rate: 0.013941220798794273
+HMM Test switch rate: 0.02451225612806403
+eisep_all actor
+HMM Train ll: 177.26061088087198
+HMM Test ll: 170.02385873376764
+HMM Train confidence: 0.9991921150715348
+HMM Test confidence: 0.9970601416826855
+HMM Train switch rate: 0.15064383047880986
+HMM Test switch rate: 0.1485742871435718

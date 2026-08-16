@@ -1,0 +1,33 @@
+name: mixer
+channels:
+  - conda-forge
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/msys2
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/pro
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+  - defaults
+dependencies:
+  - python=3.8
+  - cudatoolkit=11.6
+  - pytorch==1.12.0
+  - torchaudio==0.12.0
+  - torchvision==0.13.0
+  - pandas
+  - networkx
+  - ogb
+  - ipykernel
+  - tensorboardx
+  - torchinfo
+  - wandb
+  - plotly
+  - numpy
+  - hydra-core
+  - tensorboard
+  - scipy
+  - matplotlib
+  - ipywidgets
+  - imageio
+  - ffmpeg
+  - threadpoolctl
+prefix: /home/geert/anaconda3/envs/mixer

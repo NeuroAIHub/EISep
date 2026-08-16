@@ -133,6 +133,12 @@ _Untitled.*
 # critic work is committed there so the diff against upstream stays readable)
 /r2dreamer/
 
+# Local scratch comparison outputs (68M)
+/compare/
+
+# Reference PDFs, including an unpublished submission (20M)
+docs/examples/reference_paper/
+
 # Model files
 docs/examples/model/
 docs/examples/output/
