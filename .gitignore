@@ -129,9 +129,43 @@ _Untitled.*
 # Local directory
 /local
 
+# Vendored fork of https://github.com/NM512/r2dreamer (own git repo; the EISep
+# critic work is committed there so the diff against upstream stays readable)
+/r2dreamer/
+
 # Model files
 docs/examples/model/
 docs/examples/output/
 docs/examples/log/
 # cache
 **/__pycache__/
+
+# Large local example outputs and datasets
+code.tar.gz
+output.png
+docs/examples/code.tar.gz
+docs/examples/MNIST/
+docs/examples/compare/
+docs/examples/github_repo/
+docs/examples/lab/
+docs/examples/learning_better_dale_neurips/
+docs/examples/ptb_data/
+docs/examples/rebuttal/
+docs/examples/result/
+docs/examples/rl/output/
+docs/examples/rl/result/
+docs/examples/rl/video/
+docs/examples/rl/weights/
+docs/examples/runs/
+docs/examples/videos/
+docs/examples/weights/
+docs/examples/**/*.pkl
+docs/examples/**/*.mp4
+docs/examples/**/*.npy
+docs/examples/**/*.npz
+docs/examples/**/*.tar.gz
+*.pkl
+*.mp4
+*.npy
+*.npz
+*.tar.gz
